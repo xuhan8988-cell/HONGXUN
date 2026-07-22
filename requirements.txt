@@ -1,0 +1,7 @@
+# 鸿讯 HONGXUN · 论文监控工具 — Python 依赖清单
+# 用法：pip install -r requirements.txt
+
+requests>=2.28.0
+python-docx>=1.1.0
+selenium>=4.15.0
+Pillow>=9.0.0
