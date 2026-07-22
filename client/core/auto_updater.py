@@ -149,9 +149,11 @@ def check_update(skip_notified: bool = False) -> Optional[dict]:
                 download_url = asset.get("browser_download_url", "")
                 break
 
-        if not download_url and "body" in data:
-            # fallback：从 release 关联的 commits 找到 tag 对应的 zip
+        if not download_url:
+            # fallback：用仓库源码 zip（源码模式下可用）
             download_url = data.get("zipball_url", "")
+            if not download_url:
+                download_url = f"https://gitee.com/{_GITEE_OWNER}/{_GITEE_REPO}/archive/refs/tags/{tag}.zip"
 
         result = {
             "version": version,
