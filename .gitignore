@@ -28,11 +28,12 @@ client/data/*
 .env
 *.key
 
-# Build artifacts
-HONGXUN-ZZU.app/
-build_exe.py
-build_exe.bat
-tools/
+# Build artifacts (moved to macos/ and windows/)
+macos/HONGXUN-ZZU.app/
+windows/build_exe.py
+windows/build_exe.bat
+windows/tools/
+windows/HONGXUN.exe
 
 # Project metadata
 PROJECT_SUMMARY.md
