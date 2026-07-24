@@ -29,7 +29,7 @@ _GITEE_TAGS_URL = f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/
 _GITEE_TOKEN = "5a813021b459eb4bb2901b6a37162533"
 
 # 当前版本（与 gui_app.py 保持同步）
-CURRENT_VERSION = "1.2.0"
+CURRENT_VERSION = "1.0.0"
 
 # 更新状态标记文件（存放于 data 目录）
 _UPDATE_MARK_FILE = None  # 在 init 时根据 BASE_DIR 设定

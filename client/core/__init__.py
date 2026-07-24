@@ -22,7 +22,7 @@
   - 代码保护 → code_protector.py
   - 报告格式 → engine.py
 """
-__version__ = "1.1.0"
+__version__ = "1.0.0"
 
 # 配置层
 from .config_manager import (
