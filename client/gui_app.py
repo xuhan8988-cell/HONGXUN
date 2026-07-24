@@ -66,7 +66,7 @@ from scheduler_daemon import (
 # 版本标识
 # ======================================================================
 APP_NAME = "鸿讯 HONGXUN（郑州大学定制版）"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.1.0"
 AUTO_UPDATER_VERSION = APP_VERSION  # 同步给 auto_updater
 
 # ======================================================================

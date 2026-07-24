@@ -402,9 +402,9 @@ def enrich_abstract(papers: list[dict], progress_callback=None) -> list[dict]:
         abstract = p.get("abstract", "")
         if abstract and abstract != "无摘要":
             cleaned = _clean_abstract(abstract)
-            # 英文单词数 < 80 视为获取有误（工程类期刊摘要常为 80-150 词）
+            # 英文单词数 < 40 视为获取有误（放宽门槛，覆盖早期短摘要）
             word_count = len(cleaned.split())
-            if word_count < 80:
+            if word_count < 40:
                 cleaned = ""
             p["abstract"] = cleaned if cleaned else "无摘要"
 

@@ -1,13 +1,13 @@
 {
-  "gui_app.py": "04569f089fde767746ef3301965f5675a7870dd23026ec18b6bda72fa973b447",
-  "scheduler_daemon.py": "e294d988c16e8597fa9ce8adec07455b23ba6f21544bf1d3717c686f6dd0fbdb",
-  "core/__init__.py": "7eb12fddbd747f1b901861756c13cc7526328d73f08d11167881c059adec5752",
-  "core/abstract.py": "ca641acd2cb96149105eb6392a99750994571a49767aa91039e92a4ea1eaa801",
-  "core/code_protector.py": "9f7e0b25b377444259fbdcd92b2db7d3b0399a939f5755f379a285f0735cc8ba",
-  "core/config_manager.py": "178a8cb0092f02cf1b9c827ef8647fe4af9d72dc0c3b81b0b6233757a17c69c8",
-  "core/coupon_manager.py": "dc94806ea2cd880bcf522b894d3afd5f7c3ebe4c4925c9ccafc5b569f4c8eee3",
-  "core/email_sender.py": "af6cfe243bcf2b08e397ba57a75d3fa2f64cff2161c7707fe84d4d6d1110eca8",
-  "core/engine.py": "03a1c173b800b7916b589ed09244bd8eb9da41455100c4f16d9594797783de5e",
+  "gui_app.py": "a7ed368f659f18f7c4f71fccf092fe7f8ece4ec919a4d52a0a44c27ad6563e11",
+  "scheduler_daemon.py": "eaedae86ffc6eef56621c34449bb6783cb67d4df573e5f3e0001e82c8259fe08",
+  "core/__init__.py": "0f0efef94cbed912eef26ac7597a6d03e8e507b906beddec5c2175fbb61e3cd8",
+  "core/abstract.py": "b6b4ea25d06333f5cdcc7dec0863ebd63bb1eb43460015f7b4e7cf16aface7a2",
+  "core/code_protector.py": "a6b57325ec248599d6254a895428dbfd2a5e389e595f15786c5dee15ddc5bc71",
+  "core/config_manager.py": "e87b25c4aab533945c936089b152ee890a6b1fc3d2fe30b2d706ad92516a25b7",
+  "core/coupon_manager.py": "b877bc6bdf768dd2d48c58032ac3ebd6badcaeec7064d89f30aab8d96faae332",
+  "core/email_sender.py": "87929ea78faed8abd5b339c5907f03ebd101e6dd7467a44a18c6183c8c4502ee",
+  "core/engine.py": "31d8099ca75d44819efb9505a4281e83e5a907466c7884d2b97c21e4d30bb5c5",
   "core/search.py": "474ffadcd5199aebd07a4fad0368f199aff87c8b5258e599867d276235392fa9",
   "core/session.py": "6d774a3ffecdf5529f1232902fe1ad6e0c4dd9ad4ed1dbee3db8596bb9a4dc79"
 }

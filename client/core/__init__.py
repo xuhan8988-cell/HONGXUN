@@ -2,7 +2,7 @@
 # 请通过程序界面解锁后编辑
 """
 鸿讯 HONGXUN · 论文监控工具 — 核心模块
-版本 1.2.0 · 软件著作权登记版
+版本 1.1.0 · 软件著作权登记版
 
 模块划分:
   - config_manager: 配置读写、输入校验、路径常量
@@ -22,7 +22,7 @@
   - 代码保护 → code_protector.py
   - 报告格式 → engine.py
 """
-__version__ = "1.2.0"
+__version__ = "1.1.0"
 
 # 配置层
 from .config_manager import (
