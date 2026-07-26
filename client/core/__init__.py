@@ -54,3 +54,4 @@ from . import auto_updater
 from . import search
 from . import abstract
 from . import email_sender
+from . import library

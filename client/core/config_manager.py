@@ -30,6 +30,7 @@ APP_CONFIG_FILE = os.path.join(DATA_DIR, "app_config.json")
 SCHEDULER_PID_FILE = os.path.join(DATA_DIR, "scheduler.pid")
 SCHEDULER_STOP_FILE = os.path.join(DATA_DIR, "scheduler_stop.flag")
 SCHEDULER_LOG_FILE = os.path.join(DATA_DIR, "scheduler.log")
+LIBRARY_FILE = os.path.join(DATA_DIR, "library.json")
 
 # 初始化目录
 for d in [DATA_DIR, OUTPUT_DIR, UNSENT_DIR]:

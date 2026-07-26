@@ -455,7 +455,7 @@ def run_history_search(task_id: str, task_data: dict, file_path: str, progress_c
 
         if progress_callback:
             progress_callback(1.0, "完成")
-        return file_path
+        return file_path, papers  # 返回 papers 以便入库
 
 
 # ── 增量检查 → 返回新论文 ────────────────────────────────

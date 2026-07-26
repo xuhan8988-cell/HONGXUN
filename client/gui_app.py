@@ -112,7 +112,7 @@ def _ui_mono_family() -> str:
 
 def init_fonts():
     """初始化全局字体对象，支持后续动态缩放"""
-    global FONT_BODY, FONT_BODY_BOLD, FONT_HEADING, FONT_TITLE, FONT_CAPTION, FONT_MONO
+    global FONT_BODY, FONT_BODY_BOLD, FONT_HEADING, FONT_TITLE, FONT_CAPTION, FONT_MONO, FONT_LABEL
     _ff = _ui_font_family()
     FONT_BODY = font.Font(family=_ff, size=FONT_BASE_SIZE)
     FONT_BODY_BOLD = font.Font(family=_ff, size=FONT_BASE_SIZE, weight="bold")
@@ -120,6 +120,7 @@ def init_fonts():
     FONT_TITLE = font.Font(family=_ff, size=FONT_TITLE_SIZE, weight="bold")
     FONT_CAPTION = font.Font(family=_ff, size=max(FONT_BASE_SIZE-1, FONT_MIN_SIZE))
     FONT_MONO = font.Font(family=_ui_mono_family(), size=FONT_BASE_SIZE)
+    FONT_LABEL = font.Font(family=_ff, size=FONT_BASE_SIZE, weight="bold")
 
 def update_font_scale(scale_factor):
     """根据缩放系数动态调整所有字体大小"""
@@ -138,36 +139,48 @@ def update_font_scale(scale_factor):
 # 颜色系统（清爽蓝白主题）
 # ======================================================================
 COLORS = {
-    "primary": "#3B82F6",           # 主色-晴空蓝
-    "primary_hover": "#2563EB",     # 悬停色
-    "primary_active": "#1D4ED8",    # 按下色
-    "primary_light": "#EFF6FF",     # 浅蓝背景（选中/高亮）
+    # ── 主色调 ──
+    "primary": "#007AFF",           # Apple 系统蓝
+    "primary_hover": "#0066D6",     # 悬停色
+    "primary_active": "#0055B3",    # 按下色
+    "primary_light": "#E8F0FE",     # 浅蓝背景（选中/高亮）
 
-    "success": "#10B981",           # 成功-薄荷绿
-    "warning": "#F59E0B",           # 警告-暖琥珀
-    "danger": "#EF4444",            # 错误-珊瑚红
+    # ── 语义色 ──
+    "success": "#34C759",           # Apple 绿 — 成功/运行中
+    "warning": "#FF9500",           # Apple 橙 — 警告
+    "danger": "#FF3B30",            # Apple 红 — 错误/排除
 
-    "bg_page": "#FFFFFF",           # 页面主背景-纯白
-    "bg_card": "#F8FAFC",           # 卡片/次要背景-极浅灰蓝
-    "bg_input": "#FFFFFF",          # 输入框背景-纯白
-    "bg_input_focus": "#FFFFFF",    # 输入框聚焦背景-纯白（无变化）
+    # ── 背景色 ──
+    "bg_page": "#FFFFFF",           # 页面主背景 — 纯白
+    "bg_card": "#F5F5F7",           # 卡片底色 — Apple 标准浅灰
+    "sidebar_bg": "#F5F5F7",       # 侧栏背景
+    "bg_input": "#FFFFFF",          # 输入框背景
+    "bg_input_focus": "#FFFFFF",
 
-    "border": "#E2E8F0",            # 边框-浅灰
-    "border_hover": "#E2E8F0",      # 边框悬停-无变化
-    "input_border": "#E2E8F0",      # 输入框边框-统一浅灰
+    # ── 边框 ──
+    "border": "#D2D2D7",            # 元素边框 — Apple 分割线灰
+    "border_light": "#E8E8ED",     # 更淡分割线
+    "input_border": "#C7C7CC",      # 输入框边框
 
-    "text_secondary": "#64748B",    # 次要文字-中灰
-    "text_body": "#334155",         # 正文-深灰
-    "text_title": "#1E293B",        # 标题-近黑
-    "text_hint": "#94A3B8",         # 占位符/提示文字
+    # ── 文字 ──
+    "text_title": "#1D1D1F",        # 标题 — 近黑
+    "text_body": "#1D1D1F",         # 正文 — 近黑
+    "text_secondary": "#86868B",    # 次要文字 — Apple 中灰
+    "text_hint": "#AEAEB2",         # 占位符 — Apple 浅灰
 
-    "selected_bg": "#EFF6FF",       # 选中背景
-    "selected_fg": "#1D4ED8",       # 选中文字
-    "hover_bg": "#F1F5F9",          # 悬停背景
+    # ── 交互状态 ──
+    "selected_bg": "#E8F0FE",       # 选中背景
+    "selected_fg": "#007AFF",       # 选中文字
+    "hover_bg": "#E8E8ED",          # 悬停背景
 
-    "btn_secondary_bg": "#FFFFFF",  # 次按钮背景
-    "btn_secondary_fg": "#334155",  # 次按钮文字
-    "btn_secondary_border": "#E2E8F0", # 次按钮边框
+    # ── 按钮 ──
+    "btn_secondary_bg": "#FFFFFF",
+    "btn_secondary_fg": "#1D1D1F",
+    "btn_secondary_border": "#D2D2D7",
+
+    # ── 状态指示 ──
+    "dot_on": "#34C759",            # 运行中绿点
+    "dot_off": "#AEAEB2",           # 停止灰点
 }
 
 # ======================================================================
@@ -915,18 +928,16 @@ class PaperMonitorApp:
         # 缩放左侧面板宽度和布局间距
         self._scale_layout(scale)
         # 强制刷新右侧内容区域，防止最大化后文字被遮挡
-        if hasattr(self, '_right_canvas') and self._right_canvas.winfo_exists():
-            self._right_canvas.update_idletasks()
-            self._right_canvas.configure(scrollregion=self._right_canvas.bbox("all"))
+        if hasattr(self, '_task_canvas') and self._task_canvas.winfo_exists():
+            self._task_canvas.update_idletasks()
+            self._task_canvas.configure(scrollregion=self._task_canvas.bbox("all"))
         self.root.update_idletasks()
 
     def _scale_layout(self, scale):
         """根据缩放系数调整布局间距和面板宽度"""
-        # 缩放左侧面板宽度（基准260px），通过 PanedWindow sash 控制确保生效
         if hasattr(self, 'left_frame') and self.left_frame.winfo_exists():
-            new_width = max(220, min(480, int(260 * min(scale, 1.85))))
+            new_width = max(200, min(440, int(240 * min(scale, 1.85))))
             self.left_frame.configure(width=new_width)
-            # PanedWindow 中设置左侧面板宽度
             try:
                 self.paned.paneconfigure(self.left_frame, width=new_width)
             except Exception:
@@ -948,19 +959,19 @@ class PaperMonitorApp:
     # ===================== UI 构建 =====================
     def _build_ui(self):
         # ========== 顶部工具栏 ==========
-        toolbar = tk.Frame(self.root, bg="#FFFFFF", height=48)
+        toolbar = tk.Frame(self.root, bg=COLORS["bg_page"], height=44)
         toolbar.pack(fill=tk.X)
         toolbar.pack_propagate(False)
 
-        tk.Frame(toolbar, bg=COLORS["border"], height=1).pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Frame(toolbar, bg="#E8E8ED", height=1).pack(side=tk.BOTTOM, fill=tk.X)
 
-        left_group = tk.Frame(toolbar, bg="#FFFFFF")
+        left_group = tk.Frame(toolbar, bg=COLORS["bg_page"])
         left_group.pack(side=tk.LEFT, padx=(16, 0), pady=6)
 
         # 标题栏小图标（28×28 缩放，完全左靠齐）
         title_icon = self._load_scaled_icon(ICON_TITLE, 28)
         if title_icon:
-            logo_label = tk.Label(left_group, image=title_icon, bg="#FFFFFF")
+            logo_label = tk.Label(left_group, image=title_icon, bg=COLORS["bg_page"])
             logo_label.image = title_icon
             self._icon_refs.append(title_icon)
         else:
@@ -968,50 +979,50 @@ class PaperMonitorApp:
                                   text=ICONS["logo"],
                                   font=(_ui_font_family(), 20, "bold"),
                                   fg=COLORS["primary"],
-                                  bg="#FFFFFF")
+                                  bg=COLORS["bg_page"])
         logo_label.pack(side=tk.LEFT)
 
         tk.Label(left_group,
-                 text="鸿讯 HONGXUN",
+                 text="HONGXUN · 论文发现工具",
                  font=FONT_TITLE,
                  fg=COLORS["text_title"],
-                 bg="#FFFFFF").pack(side=tk.LEFT, padx=(8, 0))
+                 bg=COLORS["bg_page"]).pack(side=tk.LEFT, padx=(12, 0))
 
-        # 顶部工具栏右侧：检查更新 + 使用说明 + 意见反馈
-        right_tool_group = tk.Frame(toolbar, bg="#FFFFFF")
-        right_tool_group.pack(side=tk.RIGHT, padx=(0, 16))
+        # 顶部工具栏右侧
+        right_tool_group = tk.Frame(toolbar, bg=COLORS["bg_page"])
+        right_tool_group.pack(side=tk.RIGHT, padx=(0, 12))
 
         self._update_btn = tk.Label(right_tool_group,
-                                     text=f"{ICONS['update']} 检查更新",
+                                     text=f"{ICONS['update']} 更新",
                                      font=FONT_CAPTION,
                                      fg=COLORS["primary"],
-                                     bg="#FFFFFF",
+                                     bg=COLORS["bg_page"],
                                      cursor="hand2",
-                                     padx=10, pady=4)
+                                     padx=10, pady=2)
         self._update_btn.pack(side=tk.RIGHT, padx=(4, 0))
         self._update_btn.bind("<Button-1>", lambda e: self._check_update_manual())
         self._update_btn.bind("<Enter>", lambda e: self._update_btn.configure(fg=COLORS["primary_hover"]))
         self._update_btn.bind("<Leave>", lambda e: self._update_btn.configure(fg=COLORS["primary"]))
 
         help_btn = tk.Label(right_tool_group,
-                            text=f"{ICONS['info']} 使用说明",
+                            text="说明",
                             font=FONT_CAPTION,
                             fg=COLORS["primary"],
-                            bg="#FFFFFF",
+                            bg=COLORS["bg_page"],
                             cursor="hand2",
-                            padx=10, pady=4)
+                            padx=10, pady=2)
         help_btn.pack(side=tk.RIGHT, padx=(4, 0))
         help_btn.bind("<Button-1>", lambda e: self._show_usage_guide())
         help_btn.bind("<Enter>", lambda e: help_btn.configure(fg=COLORS["primary_hover"]))
         help_btn.bind("<Leave>", lambda e: help_btn.configure(fg=COLORS["primary"]))
 
         fb_btn = tk.Label(right_tool_group,
-                          text=f"{ICONS['feedback']} 意见反馈",
+                          text="反馈",
                           font=FONT_CAPTION,
                           fg=COLORS["primary"],
-                          bg="#FFFFFF",
+                          bg=COLORS["bg_page"],
                           cursor="hand2",
-                          padx=10, pady=4)
+                          padx=10, pady=2)
         fb_btn.pack(side=tk.RIGHT, padx=(4, 0))
         fb_btn.bind("<Button-1>", lambda e: self._open_feedback())
         fb_btn.bind("<Enter>", lambda e: fb_btn.configure(fg=COLORS["primary_hover"]))
@@ -1019,37 +1030,43 @@ class PaperMonitorApp:
 
         # ========== 主内容区 ==========
         self.content_frame = ttk.Frame(self.root, style="TFrame")
-        self.content_frame.pack(fill=tk.BOTH, expand=True, padx=24, pady=20)
+        self.content_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
 
         self.paned = ttk.PanedWindow(self.content_frame, orient=tk.HORIZONTAL)
         self.paned.pack(fill=tk.BOTH, expand=True)
 
         # -------- 左侧任务面板 --------
-        self.left_frame = ttk.Frame(self.paned, width=260, style="TFrame")
+        self.left_frame = tk.Frame(self.paned, bg=COLORS["sidebar_bg"], width=240)
         self.paned.add(self.left_frame, weight=0)
 
-        # 任务列表
-        title_row = ttk.Frame(self.left_frame, style="TFrame")
-        title_row.pack(fill=tk.X, pady=(0, 12))
-        ttk.Label(title_row, text="监控任务", style="Heading.TLabel").pack(side=tk.LEFT)
+        # 侧栏标题行（固定不滚动）
+        title_row = tk.Frame(self.left_frame, bg=COLORS["sidebar_bg"])
+        title_row.pack(fill=tk.X, padx=12, pady=(16, 0))
+
+        tk.Label(title_row, text="📋 监控任务",
+                 font=FONT_HEADING, fg=COLORS["text_title"],
+                 bg=COLORS["sidebar_bg"]).pack(side=tk.LEFT)
 
         new_btn = tk.Label(title_row,
                            text=ICONS["plus"],
-                           font=(_ui_font_family(), 18, "bold"),
+                           font=(_ui_font_family(), 20, "bold"),
                            fg=COLORS["primary"],
-                           bg=COLORS["bg_page"],
+                           bg=COLORS["sidebar_bg"],
                            cursor="hand2",
-                           padx=4)
+                           padx=6)
         new_btn.pack(side=tk.RIGHT)
         new_btn.bind("<Button-1>", lambda e: self._new_task())
-        new_btn.bind("<Enter>", lambda e: new_btn.configure(bg=COLORS["primary_light"]))
-        new_btn.bind("<Leave>", lambda e: new_btn.configure(bg=COLORS["bg_page"]))
+        new_btn.bind("<Enter>", lambda e: new_btn.configure(fg=COLORS["primary_hover"]))
+        new_btn.bind("<Leave>", lambda e: new_btn.configure(fg=COLORS["primary"]))
 
-        list_frame = tk.Frame(self.left_frame,
-                              bg=COLORS["bg_card"],
-                              highlightbackground=COLORS["border"],
+        # 标题分隔线
+        tk.Frame(self.left_frame, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=12, pady=(8, 6))
+
+        # 任务列表卡片容器
+        list_frame = tk.Frame(self.left_frame, bg=COLORS["bg_page"],
+                              highlightbackground=COLORS["border_light"],
                               highlightthickness=1)
-        list_frame.pack(fill=tk.BOTH, expand=True)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 6))
 
         self.task_listbox = tk.Listbox(list_frame,
                                         font=FONT_BODY,
@@ -1058,332 +1075,361 @@ class PaperMonitorApp:
                                         activestyle="none",
                                         borderwidth=0,
                                         highlightthickness=0,
-                                        bg=COLORS["bg_card"],
+                                        bg=COLORS["bg_page"],
                                         fg=COLORS["text_body"],
                                         relief="flat",
                                         exportselection=False)
-        self.task_listbox.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        self.task_listbox.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         self.task_listbox.bind("<<ListboxSelect>>", self._on_task_select)
         self.task_listbox.bind("<Double-1>", self._on_task_rename)
         self.task_listbox.bind("<Button-3>", self._on_task_context_menu)
 
-        btn_row = ttk.Frame(self.left_frame, style="TFrame")
-        btn_row.pack(fill=tk.X, pady=(12, 0))
-        btn_row.columnconfigure(0, weight=1, uniform=btn_row)
-        btn_row.columnconfigure(1, weight=1, uniform=btn_row)
-        new_btn = ttk.Button(btn_row, text=f" {ICONS['plus']} 新建", style="Primary.TButton",
-                   command=self._new_task)
-        new_btn.grid(row=0, column=0, sticky=tk.EW, padx=(0, 3))
-        del_btn = ttk.Button(btn_row, text=f" {ICONS['trash']} 删除", style="Danger.TButton",
-                   command=self._delete_task)
-        del_btn.grid(row=0, column=1, sticky=tk.EW, padx=(3, 0))
+        # 侧栏底部：每日推送状态卡片
+        push_card = tk.Frame(self.left_frame, bg=COLORS["bg_page"],
+                             highlightbackground=COLORS["border_light"],
+                             highlightthickness=1)
+        push_card.pack(fill=tk.X, padx=12, pady=(0, 12))
 
-        # -------- 右侧内容区（可滚动适配窗口） --------
+        self._sidebar_push_label = tk.Label(push_card,
+                                             text=f"{ICONS['dot_off']} 每日推送未启动",
+                                             font=FONT_CAPTION,
+                                             fg=COLORS["text_secondary"],
+                                             bg=COLORS["bg_page"],
+                                             anchor=tk.W, padx=12, pady=8)
+        self._sidebar_push_label.pack(fill=tk.X)
+
+        # 删除按钮移出 — 通过右键菜单
+
+        # -------- 右侧内容区（ttk.Notebook 双标签） --------
         right_frame = ttk.Frame(self.paned, style="TFrame")
         self.paned.add(right_frame, weight=1)
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(0, weight=1)
-        right_frame.rowconfigure(1, weight=0)
 
-        # Canvas + Scrollbar 实现右侧滚动（支持垂直和水平滚动）
-        self._right_canvas = tk.Canvas(right_frame, borderwidth=0, highlightthickness=0,
-                                 bg="#FFFFFF")
-        right_scrollbar_v = ttk.Scrollbar(right_frame, orient=tk.VERTICAL,
-                                        command=self._right_canvas.yview)
-        right_scrollbar_h = ttk.Scrollbar(right_frame, orient=tk.HORIZONTAL,
-                                          command=self._right_canvas.xview)
-        self._right_canvas.configure(yscrollcommand=right_scrollbar_v.set,
-                                     xscrollcommand=right_scrollbar_h.set)
-        right_scrollbar_v.grid(row=0, column=1, rowspan=2, sticky=tk.NS)
-        right_scrollbar_h.grid(row=1, column=0, sticky=tk.EW)
-        self._right_canvas.grid(row=0, column=0, sticky=tk.NSEW)
+        self.notebook = ttk.Notebook(right_frame)
+        self.notebook.grid(row=0, column=0, sticky=tk.NSEW)
 
-        # 可滚动内部容器
-        scrollable_frame = ttk.Frame(self._right_canvas, style="TFrame")
-        scrollable_frame.bind("<Configure>",
-                              lambda e: self._right_canvas.configure(scrollregion=self._right_canvas.bbox("all")))
-        self._right_canvas_window = self._right_canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW)
+        # Notebook 标签样式
+        style = ttk.Style()
+        style.configure("TNotebook", background=COLORS["bg_page"], borderwidth=0)
+        style.configure("TNotebook.Tab",
+                        background="#F5F5F7",
+                        foreground="#86868B",
+                        padding=[24, 8, 24, 8],
+                        borderwidth=0,
+                        focusthickness=0,
+                        font=FONT_BODY_BOLD)
+        style.map("TNotebook.Tab",
+                  background=[("selected", "#007AFF")],
+                  foreground=[("selected", "#FFFFFF")])
 
-        # Canvas 宽度变化时，设置内部容器最小宽度为 Canvas 宽度（防止不必要水平滚动）
-        def _configure_canvas_width(event):
-            self._right_canvas.itemconfig(self._right_canvas_window, width=max(event.width, 400))
-        self._right_canvas.bind("<Configure>", _configure_canvas_width)
+        # ========== Tab 1: 任务设置（可滚动） ==========
+        self._task_tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(self._task_tab, text="  📋 任务设置  ")
+        self._task_tab.columnconfigure(0, weight=1)
+        self._task_tab.rowconfigure(0, weight=1)
 
-        # 鼠标滚轮垂直滚动 + Shift+滚轮水平滚动
+        # Tab 1 内嵌 Canvas + Scrollbar
+        self._task_canvas = tk.Canvas(self._task_tab, borderwidth=0, highlightthickness=0,
+                                      bg=COLORS["bg_page"])
+        task_v_scroll = ttk.Scrollbar(self._task_tab, orient=tk.VERTICAL,
+                                      command=self._task_canvas.yview)
+        task_h_scroll = ttk.Scrollbar(self._task_tab, orient=tk.HORIZONTAL,
+                                      command=self._task_canvas.xview)
+        self._task_canvas.configure(yscrollcommand=task_v_scroll.set,
+                                    xscrollcommand=task_h_scroll.set)
+        self._task_canvas.grid(row=0, column=0, sticky=tk.NSEW)
+        task_v_scroll.grid(row=0, column=1, sticky=tk.NS)
+        task_h_scroll.grid(row=1, column=0, sticky=tk.EW)
+
+        scrollable = ttk.Frame(self._task_canvas, style="TFrame")
+        scrollable.bind("<Configure>",
+                        lambda e: self._task_canvas.configure(scrollregion=self._task_canvas.bbox("all")))
+        self._task_canvas_window = self._task_canvas.create_window((0, 0), window=scrollable, anchor=tk.NW)
+
+        def _configure_task_canvas_width(event):
+            self._task_canvas.itemconfig(self._task_canvas_window, width=max(event.width, 400))
+        self._task_canvas.bind("<Configure>", _configure_task_canvas_width)
+
+        # 鼠标滚轮
         def _on_mousewheel(event):
-            self._right_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            self._task_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         def _on_shift_mousewheel(event):
-            self._right_canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+            self._task_canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
         def _bind_mousewheel(event):
-            self._right_canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
-            self._right_canvas.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel, add="+")
+            self._task_canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
+            self._task_canvas.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel, add="+")
         def _unbind_mousewheel(event):
-            self._right_canvas.unbind_all("<MouseWheel>")
-            self._right_canvas.unbind_all("<Shift-MouseWheel>")
-        scrollable_frame.bind("<Enter>", _bind_mousewheel)
-        scrollable_frame.bind("<Leave>", _unbind_mousewheel)
+            self._task_canvas.unbind_all("<MouseWheel>")
+            self._task_canvas.unbind_all("<Shift-MouseWheel>")
+        scrollable.bind("<Enter>", _bind_mousewheel)
+        scrollable.bind("<Leave>", _unbind_mousewheel)
 
+        # 任务设置内容（原 scrollable 内的全部内容）
         # ========== 任务设置区 ==========
-        setting_frame = ttk.LabelFrame(scrollable_frame, text=" 任务设置（仅限英文论文）")
-        setting_frame.pack(fill=tk.X, padx=4, pady=(0, 16))
-        setting_frame.columnconfigure(1, weight=1)
+        # ── 卡片 1: 检索参数 ──
+        search_card = tk.Frame(scrollable, bg=COLORS["bg_page"],
+                               highlightbackground=COLORS["border_light"],
+                               highlightthickness=1)
+        search_card.pack(fill=tk.X, padx=2, pady=(0, 12))
 
-        # 1. 任务名称
-        ttk.Label(setting_frame, text=f"{ICONS['task']} 任务名称",
-                  style="TLabel", anchor=tk.W, width=LABEL_WIDTH).grid(
-            row=0, column=0, sticky=tk.W, padx=(14, 10), pady=12)
+        tk.Label(search_card, text="🔍 检索参数", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_page"]
+                 ).pack(anchor=tk.W, padx=16, pady=(14, 4))
+        tk.Frame(search_card, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
+
+        # 表单区域用 grid
+        sf = tk.Frame(search_card, bg=COLORS["bg_page"])
+        sf.pack(fill=tk.X, padx=16, pady=(0, 14))
+        sf.columnconfigure(1, weight=1)
+
+        row = 0
+        # 任务名称
+        tk.Label(sf, text="任务名称", font=FONT_LABEL,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
         self.task_name_var = tk.StringVar()
-        name_entry = tk.Entry(setting_frame, textvariable=self.task_name_var,
-                               bd=1, relief="solid", highlightthickness=0,
-                               bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                               insertbackground=COLORS["text_body"],
-                               insertofftime=0,
-                               selectbackground=COLORS["primary_light"],
-                               selectforeground=COLORS["primary_active"],
-                               cursor="xterm",
-                               font=FONT_BODY)
-        name_entry.grid(row=0, column=1, sticky=tk.EW, padx=(0, 14), pady=12)
+        tk.Entry(sf, textvariable=self.task_name_var,
+                 bd=1, relief="solid", highlightthickness=0,
+                 bg=COLORS["bg_input"], fg=COLORS["text_body"],
+                 insertbackground=COLORS["text_body"], font=FONT_BODY).grid(
+            row=row, column=1, sticky=tk.EW, pady=6)
+        row += 1
 
-        # 2. 期刊名称
-        ttk.Label(setting_frame, text=f"{ICONS['journal']} 期刊名称",
-                  style="TLabel", anchor=tk.W, width=LABEL_WIDTH).grid(
-            row=1, column=0, sticky=tk.NW, padx=(14, 10), pady=12)
+        # 期刊名称
+        tk.Label(sf, text="期刊名称", font=FONT_LABEL,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
         self.journal_var = tk.StringVar()
-        self.journal_entry = tk.Entry(setting_frame, textvariable=self.journal_var,
-                                       bd=1, relief="solid", highlightthickness=0,
-                                       bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                                       insertbackground=COLORS["text_body"],
-                                       insertofftime=0,
-                                       selectbackground=COLORS["primary_light"],
-                                       selectforeground=COLORS["primary_active"],
-                                       cursor="xterm",
-                                       font=FONT_BODY)
-        self.journal_entry.grid(row=1, column=1, sticky=tk.EW, padx=(0, 14), pady=12)
-        ttk.Label(setting_frame, text="英文分号分隔，最多10个，如 Nature;Science;Cell",
-                  style="Caption.TLabel").grid(row=2, column=1, sticky=tk.W, padx=(0, 14))
+        self.journal_entry = tk.Entry(sf, textvariable=self.journal_var,
+                                      bd=1, relief="solid", highlightthickness=0,
+                                      bg=COLORS["bg_input"], fg=COLORS["text_body"],
+                                      insertbackground=COLORS["text_body"], font=FONT_BODY)
+        self.journal_entry.grid(row=row, column=1, sticky=tk.EW, pady=6)
+        tk.Label(sf, text="英文分号分隔，最多10个，如 Nature;Science;Cell",
+                 font=FONT_CAPTION, fg=COLORS["text_hint"], bg=COLORS["bg_page"]
+                 ).grid(row=row+1, column=1, sticky=tk.W, pady=(0, 6))
+        row += 2
 
-        # 3. 关键词
-        ttk.Label(setting_frame, text=f"{ICONS['tag']} 关键词",
-                  style="TLabel", anchor=tk.W, width=LABEL_WIDTH).grid(
-            row=3, column=0, sticky=tk.NW, padx=(14, 10), pady=12)
+        # 关键词
+        tk.Label(sf, text="关键词", font=FONT_LABEL,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
         self.keyword_var = tk.StringVar()
-        kw_entry = tk.Entry(setting_frame, textvariable=self.keyword_var,
-                             bd=1, relief="solid", highlightthickness=0,
-                             bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                             insertbackground=COLORS["text_body"],
-                             insertofftime=0,
-                             selectbackground=COLORS["primary_light"],
-                             selectforeground=COLORS["primary_active"],
-                             cursor="xterm",
-                             font=FONT_BODY)
-        kw_entry.grid(row=3, column=1, sticky=tk.EW, padx=(0, 14), pady=12)
-        ttk.Label(setting_frame, text="英文分号分隔，最多10个",
-                  style="Caption.TLabel").grid(row=4, column=1, sticky=tk.W, padx=(0, 14))
+        tk.Entry(sf, textvariable=self.keyword_var,
+                 bd=1, relief="solid", highlightthickness=0,
+                 bg=COLORS["bg_input"], fg=COLORS["text_body"],
+                 insertbackground=COLORS["text_body"], font=FONT_BODY).grid(
+            row=row, column=1, sticky=tk.EW, pady=6)
+        tk.Label(sf, text="英文分号分隔，最多10个",
+                 font=FONT_CAPTION, fg=COLORS["text_hint"], bg=COLORS["bg_page"]
+                 ).grid(row=row+1, column=1, sticky=tk.W, pady=(0, 6))
+        row += 2
 
-        # 4. 历史检索范围
-        ttk.Label(setting_frame, text=f"{ICONS['calendar']} 历史检索范围",
-                  style="TLabel", anchor=tk.W, width=LABEL_WIDTH).grid(
-            row=5, column=0, sticky=tk.W, padx=(14, 10), pady=12)
+        # 检索范围（双输入框）
+        tk.Label(sf, text="检索范围", font=FONT_LABEL,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
+        range_frame = tk.Frame(sf, bg=COLORS["bg_page"])
+        range_frame.grid(row=row, column=1, sticky=tk.EW, pady=6)
+        self.date_start_var = tk.StringVar()
+        self.date_end_var = tk.StringVar()
+        # 从原有的 date_var 解析初始值
+        _init_dates = self.date_var.get().split(";") if hasattr(self, 'date_var') else ["", ""]
+        self.date_start_var.set(_init_dates[0] if len(_init_dates) > 0 else "")
+        self.date_end_var.set(_init_dates[1] if len(_init_dates) > 1 else "")
+        tk.Entry(range_frame, textvariable=self.date_start_var,
+                 width=16, bd=1, relief="solid", highlightthickness=0,
+                 bg=COLORS["bg_input"], fg=COLORS["text_body"],
+                 insertbackground=COLORS["text_body"], font=FONT_BODY).pack(side=tk.LEFT)
+        tk.Label(range_frame, text=" → ", font=FONT_BODY,
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_page"]).pack(side=tk.LEFT, padx=6)
+        tk.Entry(range_frame, textvariable=self.date_end_var,
+                 width=16, bd=1, relief="solid", highlightthickness=0,
+                 bg=COLORS["bg_input"], fg=COLORS["text_body"],
+                 insertbackground=COLORS["text_body"], font=FONT_BODY).pack(side=tk.LEFT)
+        tk.Label(sf, text="格式: 2020-01-01 → 2026-07-26",
+                 font=FONT_CAPTION, fg=COLORS["text_hint"], bg=COLORS["bg_page"]
+                 ).grid(row=row+1, column=1, sticky=tk.W, pady=(0, 6))
+
+        # 保留 date_var 供旧代码使用（同步双输入框→旧变量）
         self.date_var = tk.StringVar()
-        date_entry = tk.Entry(setting_frame, textvariable=self.date_var,
-                               bd=1, relief="solid", highlightthickness=0,
-                               bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                               insertbackground=COLORS["text_body"],
-                               insertofftime=0,
-                               selectbackground=COLORS["primary_light"],
-                               selectforeground=COLORS["primary_active"],
-                               cursor="xterm",
-                               font=FONT_BODY)
-        date_entry.grid(row=5, column=1, sticky=tk.EW, padx=(0, 14), pady=12)
-        ttk.Label(setting_frame, text="格式：yyyy-mm-dd;yyyy-mm-dd，范围 1949-10-01 至 2100-10-01",
-                  style="Caption.TLabel").grid(row=6, column=1, sticky=tk.W, padx=(0, 14))
+        def _sync_date(*_):
+            self.date_var.set(f"{self.date_start_var.get()};{self.date_end_var.get()}")
+        self.date_start_var.trace_add("write", _sync_date)
+        self.date_end_var.trace_add("write", _sync_date)
+        _sync_date()
+        row += 2
 
-        # 操作按钮区
-        btn_frame = ttk.Frame(setting_frame, style="TFrame")
-        btn_frame.grid(row=7, column=0, columnspan=2, pady=16)
-        ttk.Button(btn_frame, text=f" {ICONS['search']}  检索并保存", style="Primary.TButton",
-                   command=self._run_history).pack(side=tk.LEFT, padx=8)
-        self._daily_push_btn = ttk.Button(btn_frame, text=f" {ICONS['play']}  每日推送(关)", style="Secondary.TButton",
-                   command=self._toggle_scheduler)
-        self._daily_push_btn.pack(side=tk.LEFT, padx=8)
-        ttk.Button(btn_frame, text=f" {ICONS['save']}  确认保存", style="Primary.TButton",
-                   command=self._save_task).pack(side=tk.LEFT, padx=8)
-        ttk.Button(btn_frame, text=f" {ICONS['cancel']}  取 消", style="Secondary.TButton",
-                   command=self._cancel_edit).pack(side=tk.LEFT, padx=8)
+        # 操作按钮
+        btn_frame = tk.Frame(sf, bg=COLORS["bg_page"])
+        btn_frame.grid(row=row, column=0, columnspan=2, pady=(12, 4))
+        ttk.Button(btn_frame, text=f" {ICONS['search']}  执行检索", style="Primary.TButton",
+                   command=self._run_history).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text=f" {ICONS['save']}  保存任务", style="Secondary.TButton",
+                   command=self._save_task).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="↻ 重置", style="Secondary.TButton",
+                   command=self._cancel_edit).pack(side=tk.LEFT, padx=4)
 
-        # ========== 邮箱推送设置（直接展开） ==========
-        # 自定义标题行
-        email_header_row = tk.Frame(scrollable_frame, bg=COLORS["bg_page"])
-        email_header_row.pack(fill=tk.X, padx=4, pady=(16, 0))
+        # ── 卡片 2: 自动监控 ──
+        monitor_card = tk.Frame(scrollable, bg=COLORS["bg_page"],
+                                highlightbackground=COLORS["border_light"],
+                                highlightthickness=1)
+        monitor_card.pack(fill=tk.X, padx=2, pady=(0, 12))
 
-        tk.Label(email_header_row, text=" 📧 邮箱推送设置",
-                 anchor=tk.W,
-                 fg=COLORS["text_title"], bg=COLORS["bg_page"],
-                 font=(_ui_font_family(), 13, "bold")).pack(side=tk.LEFT, padx=(18, 0))
+        tk.Label(monitor_card, text="📧 自动监控", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_page"]
+                 ).pack(anchor=tk.W, padx=16, pady=(14, 4))
+        tk.Frame(monitor_card, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
 
-        right_header_group = tk.Frame(email_header_row, bg=COLORS["bg_page"])
-        right_header_group.pack(side=tk.RIGHT, padx=(0, 8))
+        mf = tk.Frame(monitor_card, bg=COLORS["bg_page"])
+        mf.pack(fill=tk.X, padx=16, pady=(0, 14))
+        mf.columnconfigure(1, weight=1)
 
-        manual_btn = tk.Label(right_header_group,
-                              text=f"{ICONS['info']} 使用手册",
-                              font=FONT_CAPTION,
-                              fg=COLORS["primary"],
-                              bg=COLORS["bg_page"],
-                              cursor="hand2",
-                              padx=8, pady=2)
-        manual_btn.pack(side=tk.RIGHT, padx=(8, 0))
-        manual_btn.bind("<Button-1>", lambda e: self._show_email_intro())
-        manual_btn.bind("<Enter>", lambda e: manual_btn.configure(fg=COLORS["primary_hover"]))
-        manual_btn.bind("<Leave>", lambda e: manual_btn.configure(fg=COLORS["primary"]))
+        # 每日推送开关
+        tk.Label(mf, text="每日推送", font=FONT_LABEL,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=0, column=0, sticky=tk.W, padx=(0, 12), pady=8)
+        self._daily_push_btn = ttk.Button(mf, text=f" {ICONS['play']}  关闭", style="Secondary.TButton",
+                                          command=self._toggle_scheduler)
+        self._daily_push_btn.grid(row=0, column=1, sticky=tk.W, pady=8)
 
-        coupon_btn = tk.Label(right_header_group,
-                              text=f"{ICONS['gift']} 礼品券",
-                              font=FONT_CAPTION,
-                              fg=COLORS["primary"],
-                              bg=COLORS["bg_page"],
-                              cursor="hand2",
-                              padx=8, pady=2)
-        coupon_btn.pack(side=tk.RIGHT)
-        coupon_btn.bind("<Button-1>", lambda e: self._redeem_coupon_dialog())
-        coupon_btn.bind("<Enter>", lambda e: coupon_btn.configure(fg=COLORS["primary_hover"]))
-        coupon_btn.bind("<Leave>", lambda e: coupon_btn.configure(fg=COLORS["primary"]))
+        # 收件邮箱
+        tk.Label(mf, text="收件邮箱", font=FONT_LABEL,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=1, column=0, sticky=tk.NW, padx=(0, 12), pady=8)
+        receiver_container = tk.Frame(mf, bg=COLORS["bg_page"])
+        receiver_container.grid(row=1, column=1, sticky=tk.EW, pady=8)
+        receiver_container.columnconfigure(0, weight=1)
 
-        # 分隔线
-        ttk.Separator(scrollable_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=4, pady=(10, 0))
+        self._receiver_frame = tk.Frame(receiver_container, bg=COLORS["bg_page"])
+        self._receiver_frame.pack(fill=tk.X)
+        self._receiver_list = []
 
-        # 邮箱设置内容区
-        ef = tk.Frame(scrollable_frame, bg=COLORS["bg_page"],
-                      highlightbackground=COLORS["border"], highlightthickness=0)
-        ef.pack(fill=tk.X, padx=4, pady=(6, 16))
-        ef.columnconfigure(1, weight=1)
-        ef.columnconfigure(3, weight=1)
+        receiver_add_frame = tk.Frame(receiver_container, bg=COLORS["bg_page"])
+        receiver_add_frame.pack(fill=tk.X, pady=(4, 0))
 
-        # 许可状态提示
-        self._license_status_label = tk.Label(ef, text="", anchor=tk.W,
-                                              font=FONT_CAPTION,
-                                              bg=COLORS["bg_page"])
-        self._license_status_label.grid(row=0, column=0, columnspan=4, sticky=tk.EW, padx=6, pady=(0, 8))
+        self._new_receiver_var = tk.StringVar()
+        self._new_receiver_entry = tk.Entry(receiver_add_frame, textvariable=self._new_receiver_var,
+                                            width=30, bd=1, relief="solid", highlightthickness=0,
+                                            bg=COLORS["bg_input"], fg=COLORS["text_body"],
+                                            insertbackground=COLORS["text_body"], font=FONT_BODY)
+        self._new_receiver_entry.pack(side=tk.LEFT, padx=(0, 8))
+        add_btn = tk.Label(receiver_add_frame, text="+ 添加",
+                           font=FONT_CAPTION, fg=COLORS["primary"], bg=COLORS["bg_page"], cursor="hand2")
+        add_btn.pack(side=tk.LEFT)
+        add_btn.bind("<Button-1>", lambda e: self._add_receiver())
+        add_btn.bind("<Enter>", lambda e: add_btn.configure(fg=COLORS["primary_hover"]))
+        add_btn.bind("<Leave>", lambda e: add_btn.configure(fg=COLORS["primary"]))
+        self._new_receiver_entry.bind("<Return>", lambda e: self._add_receiver())
 
-        # 第一行：发件邮箱 + SMTP授权码
-        tk.Label(ef, text=f"{ICONS['send']} 发件邮箱", anchor=tk.W, width=LABEL_WIDTH,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"],
-                 font=FONT_BODY).grid(row=1, column=0, sticky=tk.W, padx=(6, 8), pady=8)
+        # ── SMTP 配置（可折叠） ──
+        smtp_header = tk.Frame(mf, bg=COLORS["bg_page"])
+        smtp_header.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(8, 0))
+        self._smtp_expanded = False
+        smtp_toggle = tk.Label(smtp_header, text="▸ SMTP 配置",
+                               font=FONT_CAPTION, fg=COLORS["primary"],
+                               bg=COLORS["bg_page"], cursor="hand2")
+        smtp_toggle.pack(side=tk.LEFT)
+        self._smtp_config_frame = tk.Frame(mf, bg=COLORS["bg_page"])
+
+        def _toggle_smtp():
+            self._smtp_expanded = not self._smtp_expanded
+            if self._smtp_expanded:
+                smtp_toggle.configure(text="▾ SMTP 配置")
+                self._smtp_config_frame.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(8, 0))
+            else:
+                smtp_toggle.configure(text="▸ SMTP 配置")
+                self._smtp_config_frame.grid_forget()
+
+        smtp_toggle.bind("<Button-1>", lambda e: _toggle_smtp())
+
+        # SMTP 配置内容
+        scf = self._smtp_config_frame
+        scf.columnconfigure(1, weight=1)
+        scf.columnconfigure(3, weight=1)
+
+        # 许可状态
+        self._license_status_label = tk.Label(scf, text="", anchor=tk.W,
+                                              font=FONT_CAPTION, bg=COLORS["bg_page"])
+        self._license_status_label.grid(row=0, column=0, columnspan=4, sticky=tk.EW, pady=(0, 6))
+
+        # 发件邮箱
+        tk.Label(scf, text="发件邮箱", font=FONT_CAPTION,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=1, column=0, sticky=tk.W, padx=(0, 8), pady=4)
         self.sender_var = tk.StringVar()
-        self.sender_entry = PlaceholderEntry(ef, placeholder="your_email@qq.com",
+        self.sender_entry = PlaceholderEntry(scf, placeholder="your_email@qq.com",
                                              textvariable=self.sender_var)
-        self.sender_entry.grid(row=1, column=1, sticky=tk.EW, padx=(0, 16), pady=8)
+        self.sender_entry.grid(row=1, column=1, sticky=tk.EW, padx=(0, 12), pady=4)
 
-        tk.Label(ef, text=f"{ICONS['key']} SMTP授权码", anchor=tk.W, width=LABEL_WIDTH,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"],
-                 font=FONT_BODY).grid(row=1, column=2, sticky=tk.W, padx=(6, 8), pady=8)
+        tk.Label(scf, text="SMTP授权码", font=FONT_CAPTION,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=1, column=2, sticky=tk.W, padx=(0, 8), pady=4)
         self.auth_code_var = tk.StringVar()
-        auth_code_frame = tk.Frame(ef, bg=COLORS["bg_page"])
-        auth_code_frame.grid(row=1, column=3, sticky=tk.EW, padx=(0, 6), pady=8)
-        auth_code_frame.columnconfigure(0, weight=1)
-        self.auth_code_entry = PlaceholderEntry(auth_code_frame, placeholder="16位授权码", show="*",
+        ac_frame = tk.Frame(scf, bg=COLORS["bg_page"])
+        ac_frame.grid(row=1, column=3, sticky=tk.EW, pady=4)
+        ac_frame.columnconfigure(0, weight=1)
+        self.auth_code_entry = PlaceholderEntry(ac_frame, placeholder="16位授权码", show="*",
                                                 textvariable=self.auth_code_var)
         self.auth_code_entry.grid(row=0, column=0, sticky=tk.EW)
         self._auth_code_visible = False
-        self._auth_code_toggle_btn = tk.Label(auth_code_frame, text="👁",
-                                              font=FONT_CAPTION,
-                                              fg=COLORS["text_secondary"],
-                                              bg=COLORS["bg_page"],
-                                              cursor="hand2", padx=6)
-        self._auth_code_toggle_btn.grid(row=0, column=1, padx=(4, 0))
-        self._auth_code_toggle_btn.bind("<Button-1>", self._toggle_auth_code_visibility)
+        toggle_auth = tk.Label(ac_frame, text="显示",
+                               font=FONT_CAPTION, fg=COLORS["primary"],
+                               bg=COLORS["bg_page"], cursor="hand2", padx=6)
+        toggle_auth.grid(row=0, column=1)
+        toggle_auth.bind("<Button-1>", lambda e: self._toggle_auth_code_visibility())
 
-        # 第二行：SMTP服务器设置（下拉菜单，含端口）
-        tk.Label(ef, text=f"{ICONS['server']} SMTP服务器设置", anchor=tk.W, width=LABEL_WIDTH,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"],
-                 font=FONT_BODY).grid(row=2, column=0, sticky=tk.W, padx=(6, 8), pady=8)
-
+        # SMTP 服务器
+        tk.Label(scf, text="SMTP服务", font=FONT_CAPTION,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=2, column=0, sticky=tk.W, padx=(0, 8), pady=4)
         self.smtp_preset_var = tk.StringVar(value="QQ邮箱")
-        self.smtp_combo = ttk.Combobox(ef, textvariable=self.smtp_preset_var,
-                                       state="readonly", width=30, font=FONT_BODY)
+        self.smtp_combo = ttk.Combobox(scf, textvariable=self.smtp_preset_var,
+                                       state="readonly", width=28, font=FONT_BODY)
         self.smtp_combo['values'] = list(SMTP_PROVIDERS.keys())
-        self.smtp_combo.grid(row=2, column=1, columnspan=3, sticky=tk.EW, padx=(0, 6), pady=8)
+        self.smtp_combo.grid(row=2, column=1, columnspan=3, sticky=tk.W, pady=4)
         self.smtp_combo.bind("<<ComboboxSelected>>", self._on_smtp_preset_selected)
-
-        # 隐藏的 server/port 变量（实际由下拉菜单控制）
         configs = get_provider_configs("QQ邮箱")
         self.smtp_server_var = tk.StringVar(value=configs[0]["server"] if configs else "smtp.qq.com")
         self.port_var = tk.StringVar(value=configs[0]["port"] if configs else "465")
 
-        # 第三行：收件邮箱（grid 布局保持与其他列对齐）
-        tk.Label(ef, text=f"{ICONS['inbox']} 收件邮箱", anchor=tk.W, width=LABEL_WIDTH,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"],
-                 font=FONT_BODY).grid(row=3, column=0, sticky=tk.W, padx=(6, 8), pady=8)
-
-        receiver_right = tk.Frame(ef, bg=COLORS["bg_page"])
-        receiver_right.grid(row=3, column=1, columnspan=3, sticky=tk.EW, padx=(0, 6), pady=8)
-        receiver_right.columnconfigure(0, weight=1)
-
-        self._receiver_frame = tk.Frame(receiver_right, bg=COLORS["bg_page"])
-        self._receiver_frame.pack(fill=tk.X)
-        self._receiver_list = []
-
-        # 新增收件邮箱输入 + 按钮
-        receiver_add_frame = tk.Frame(receiver_right, bg=COLORS["bg_page"])
-        receiver_add_frame.pack(fill=tk.X)
-
-        self._new_receiver_var = tk.StringVar()
-        self._new_receiver_entry = tk.Entry(receiver_add_frame, textvariable=self._new_receiver_var,
-                                            width=32,
-                                            bd=1, relief="solid", highlightthickness=0,
-                                            bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                                            insertbackground=COLORS["text_body"],
-                                            insertofftime=0,
-                                            selectbackground=COLORS["primary_light"],
-                                            selectforeground=COLORS["primary_active"],
-                                            cursor="xterm",
-                                            font=FONT_BODY)
-        self._new_receiver_entry.pack(side=tk.LEFT, padx=(0, 8))
-
-        add_receiver_btn = tk.Label(receiver_add_frame, text=f"{ICONS['plus']} 添加",
-                                    font=FONT_CAPTION,
-                                    fg=COLORS["primary"], bg=COLORS["bg_page"],
-                                    cursor="hand2")
-        add_receiver_btn.pack(side=tk.LEFT)
-        add_receiver_btn.bind("<Button-1>", lambda e: self._add_receiver())
-        add_receiver_btn.bind("<Enter>", lambda e: add_receiver_btn.configure(fg=COLORS["primary_hover"]))
-        add_receiver_btn.bind("<Leave>", lambda e: add_receiver_btn.configure(fg=COLORS["primary"]))
-        self._new_receiver_entry.bind("<Return>", lambda e: self._add_receiver())
-
-        # 第四行：保存按钮 + 再发送按钮 + 代码锁
-        btn_row_email = tk.Frame(ef, bg=COLORS["bg_page"])
-        btn_row_email.grid(row=5, column=0, columnspan=4, sticky=tk.EW, padx=6, pady=(8, 4))
-
-        btn_save_email = ttk.Button(btn_row_email, text=f" {ICONS['save']}  保存邮箱设置",
-                                    style="Primary.TButton",
-                                    command=self._save_email_config)
-        btn_save_email.pack(side=tk.LEFT)
-
-        self._resend_btn = ttk.Button(btn_row_email, text=f" 再发送 ", style="Secondary.TButton",
+        # 操作按钮
+        btn_row_email = tk.Frame(scf, bg=COLORS["bg_page"])
+        btn_row_email.grid(row=4, column=0, columnspan=4, sticky=tk.EW, pady=(8, 4))
+        ttk.Button(btn_row_email, text="保存配置", style="Primary.TButton",
+                   command=self._save_email_config).pack(side=tk.LEFT)
+        self._resend_btn = ttk.Button(btn_row_email, text="再发送", style="Secondary.TButton",
                                       command=self._resend_unsent_email)
         self._resend_btn.pack(side=tk.LEFT, padx=(8, 0))
         self._resend_btn.state(["disabled"])
 
-        self._code_lock_btn = tk.Label(btn_row_email, 
-                                       text=f"{ICONS['unlock']} 底层代码已解锁",
-                                       font=FONT_CAPTION,
-                                       fg=COLORS["success"], bg=COLORS["bg_page"],
-                                       cursor="hand2")
-        self._code_lock_btn.pack(side=tk.RIGHT)
-        self._code_lock_btn.bind("<Button-1>", lambda e: self._verify_code_access())
-        self._code_locked = True
-        self._update_code_lock_ui()
+        # 使用指南 + 礼品券 链接
+        links_frame = tk.Frame(monitor_card, bg=COLORS["bg_page"])
+        links_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
+        for text, cmd in [("📖 使用指南", self._show_email_intro),
+                          ("🎟 礼品券", self._redeem_coupon_dialog)]:
+            lb = tk.Label(links_frame, text=text, font=FONT_CAPTION,
+                          fg=COLORS["primary"], bg=COLORS["bg_page"], cursor="hand2")
+            lb.pack(side=tk.LEFT, padx=(0, 16))
+            lb.bind("<Button-1>", lambda e, c=cmd: c())
+            lb.bind("<Enter>", lambda e, l=lb: l.configure(fg=COLORS["primary_hover"]))
+            lb.bind("<Leave>", lambda e, l=lb: l.configure(fg=COLORS["primary"]))
 
         # ========== CNKI 知网数据获取模块 ==========
         # 已移除
 
-        # -------- 进度条 --------
+        # ========== Tab 2: 文献书架 ==========
+        self._build_library_tab()
+
+        # ========== Notebook 标签切换事件 ==========
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+        # -------- 进度条（常驻 2px 分割线，活跃时展开） --------
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_label_var = tk.StringVar(value="0%")
+
+        # 不活跃状态：2px 灰色细线（在 status_frame 构建完后再 pack）
+        self._progress_idle = tk.Frame(self.root, bg=COLORS["border_light"], height=2)
+        self._progress_idle_packed = False
+
+        # 活跃进度条容器（默认隐藏）
         progress_frame = ttk.Frame(self.root, style="TFrame")
         self.progress_bar = ttk.Progressbar(
-            progress_frame, 
+            progress_frame,
             variable=self.progress_var,
-            maximum=1.0, 
+            maximum=1.0,
             mode="determinate",
             style="Horizontal.TProgressbar"
         )
@@ -1396,10 +1442,10 @@ class PaperMonitorApp:
         self.progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(24, 8))
         self.progress_label.pack(side=tk.LEFT, fill=tk.X, padx=(0, 24))
 
-        # 取消检索按钮（默认隐藏）
+        # 取消检索按钮（Secondary 灰色）
         self._cancel_search_btn = ttk.Button(
             progress_frame, text=f" {ICONS['cancel']}  取消",
-            style="Danger.TButton",
+            style="Secondary.TButton",
             command=self._cancel_current_search,
         )
         self._cancel_search_btn.pack(side=tk.RIGHT, padx=(0, 24))
@@ -1409,34 +1455,59 @@ class PaperMonitorApp:
         self._progress_frame = progress_frame
 
         # -------- 底部状态栏 --------
-        status_frame = tk.Frame(self.root, bg=COLORS["bg_card"],
-                                highlightbackground=COLORS["border"], highlightthickness=1)
+        status_frame = tk.Frame(self.root, bg=COLORS["sidebar_bg"],
+                                highlightbackground=COLORS["border_light"],
+                                highlightthickness=0, height=38)
         status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        status_frame.pack_propagate(False)
 
-        self._status_indicator = tk.Label(status_frame,
-                                          text=f"{ICONS['dot_off']} 已暂停",
+        # 上部分隔线
+        tk.Frame(status_frame, bg=COLORS["border_light"], height=1).pack(fill=tk.X, side=tk.TOP)
+
+        inner_sf = tk.Frame(status_frame, bg=COLORS["sidebar_bg"])
+        inner_sf.pack(fill=tk.BOTH, expand=True)
+
+        self._status_indicator = tk.Label(inner_sf,
+                                          text=f"{ICONS['dot_off']} 就绪",
                                           font=FONT_CAPTION,
-                                          fg=COLORS["warning"],
-                                          bg=COLORS["bg_card"])
-        self._status_indicator.pack(side=tk.LEFT, padx=(20, 10), pady=6)
+                                          fg=COLORS["dot_off"],
+                                          bg=COLORS["sidebar_bg"])
+        self._status_indicator.pack(side=tk.LEFT, padx=(20, 10), pady=8)
 
-        self.status_var = tk.StringVar(value="就绪")
-        self._version_label = tk.Label(status_frame,
-                                        text="郑州大学定制版",
+        self.status_var = tk.StringVar(value="")
+        tk.Label(inner_sf, textvariable=self.status_var,
+                 font=FONT_CAPTION, fg=COLORS["text_secondary"],
+                 bg=COLORS["sidebar_bg"]
+                 ).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=8)
+
+        self._version_label = tk.Label(inner_sf,
+                                        text="郑州大学 v1.0.0",
                                         font=FONT_CAPTION,
-                                        fg=COLORS["primary"],
-                                        bg=COLORS["bg_card"])
-        self._version_label.pack(side=tk.LEFT, padx=(0, 20), pady=6)
-        tk.Label(status_frame, textvariable=self.status_var,
-                 font=FONT_CAPTION, fg=COLORS["text_body"], bg=COLORS["bg_card"]
-                 ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+                                        fg=COLORS["text_hint"],
+                                        bg=COLORS["sidebar_bg"])
+        self._version_label.pack(side=tk.RIGHT, padx=(8, 16), pady=8)
 
-        self._next_run_label = tk.Label(status_frame,
+        self._next_run_label = tk.Label(inner_sf,
                                         text=f"{ICONS['clock']} 下次执行：--",
                                         font=FONT_CAPTION,
                                         fg=COLORS["text_secondary"],
-                                        bg=COLORS["bg_card"])
-        self._next_run_label.pack(side=tk.RIGHT, padx=20, pady=6)
+                                        bg=COLORS["sidebar_bg"])
+        self._next_run_label.pack(side=tk.RIGHT, padx=(0, 16), pady=8)
+
+        # 代码锁按钮（状态栏右下）
+        self._code_lock_btn = tk.Label(inner_sf,
+                                       text=f"{ICONS['unlock']}",
+                                       font=FONT_CAPTION,
+                                       fg=COLORS["text_hint"], bg=COLORS["sidebar_bg"],
+                                       cursor="hand2")
+        self._code_lock_btn.pack(side=tk.RIGHT, padx=(0, 4), pady=8)
+        self._code_lock_btn.bind("<Button-1>", lambda e: self._verify_code_access())
+        self._code_locked = True
+        self._update_code_lock_ui()
+
+        # 现在 pack idle 细线（在所有控件之后）
+        self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
+        self._progress_idle_packed = True
 
     # ===================== 任务列表操作 =====================
     def _refresh_task_list(self):
@@ -1491,6 +1562,8 @@ class PaperMonitorApp:
         self.task_name_var.set("")
         self.journal_var.set("")
         self.keyword_var.set("")
+        self.date_start_var.set("2016-01-01")
+        self.date_end_var.set("2026-01-01")
         self.date_var.set("2016-01-01;2026-01-01")
         self.status_var.set("当前：新建任务")
 
@@ -1544,7 +1617,11 @@ class PaperMonitorApp:
         self.task_name_var.set(task["name"])
         self.journal_var.set("; ".join(task["journals"]))
         self.keyword_var.set("; ".join(task["keywords"]))
-        self.date_var.set(f"{task['date_start']};{task['date_end']}")
+        ds = task.get("date_start", "")
+        de = task.get("date_end", "")
+        self.date_start_var.set(ds)
+        self.date_end_var.set(de)
+        self.date_var.set(f"{ds};{de}")
         self.status_var.set(f"当前编辑：{task['name']}")
 
     # ===================== 保存与校验 =====================
@@ -1609,6 +1686,557 @@ class PaperMonitorApp:
         """礼品券兑换成功后清除缓存，下次调用重新联网确认"""
         self._activation_cache = None
 
+    # ===================== 文献书架 =====================
+
+    def _build_library_tab(self):
+        """构建文献书架 Tab 2（含 Treeview、工具栏、统计栏）"""
+        self._lib_tab = ttk.Frame(self.notebook, style="TFrame")
+        self.notebook.add(self._lib_tab, text="  📚 文献书架  ")
+        self._lib_tab.columnconfigure(0, weight=1)
+        self._lib_tab.rowconfigure(0, weight=0)  # toolbar
+        self._lib_tab.rowconfigure(1, weight=1)  # treeview
+        self._lib_tab.rowconfigure(2, weight=0)  # stats
+
+        # ── 顶部工具栏 ──
+        toolbar_frame = tk.Frame(self._lib_tab, bg=COLORS["bg_page"])
+        toolbar_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 8))
+        toolbar_frame.columnconfigure(4, weight=1)
+
+        # 状态筛选下拉
+        tk.Label(toolbar_frame, text="状态:", fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_page"], font=FONT_BODY).grid(row=0, column=0, padx=(0, 4))
+        self._lib_status_var = tk.StringVar(value="全部")
+        status_combo = ttk.Combobox(toolbar_frame, textvariable=self._lib_status_var,
+                                    values=["全部", "待读", "已读", "排除"],
+                                    state="readonly", width=6, font=FONT_BODY)
+        status_combo.grid(row=0, column=1, padx=(0, 8))
+        status_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_library())
+
+        # 来源任务筛选下拉
+        tk.Label(toolbar_frame, text="任务:", fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_page"], font=FONT_BODY).grid(row=0, column=2, padx=(0, 4))
+        self._lib_task_var = tk.StringVar(value="全部")
+        self._lib_task_combo = ttk.Combobox(toolbar_frame, textvariable=self._lib_task_var,
+                                            state="readonly", width=14, font=FONT_BODY)
+        self._lib_task_combo.grid(row=0, column=3, padx=(0, 8))
+        self._lib_task_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_library())
+
+        # 标题搜索框（Enter 触发）
+        self._lib_search_var = tk.StringVar()
+        search_entry = tk.Entry(toolbar_frame, textvariable=self._lib_search_var,
+                                bd=1, relief="solid", highlightthickness=0,
+                                bg=COLORS["bg_input"], fg=COLORS["text_body"],
+                                insertbackground=COLORS["text_body"],
+                                font=FONT_BODY)
+        search_entry.grid(row=0, column=4, sticky=tk.EW, padx=(0, 8), ipadx=4)
+        search_entry.bind("<Return>", lambda e: self._refresh_library())
+
+        # 搜索按钮
+        search_btn = tk.Label(toolbar_frame, text="🔍",
+                              font=FONT_BODY, fg=COLORS["primary"],
+                              bg=COLORS["bg_page"], cursor="hand2")
+        search_btn.grid(row=0, column=5, padx=(0, 8))
+        search_btn.bind("<Button-1>", lambda e: self._refresh_library())
+
+        # 导出 RIS 按钮
+        export_btn = ttk.Button(toolbar_frame, text="📤 导出 RIS",
+                                style="Primary.TButton",
+                                command=self._export_ris_dialog)
+        export_btn.grid(row=0, column=6, padx=(0, 4))
+
+        # 刷新按钮
+        refresh_btn = ttk.Button(toolbar_frame, text="↻",
+                                 style="Secondary.TButton",
+                                 command=self._refresh_library)
+        refresh_btn.grid(row=0, column=7)
+
+        # ── 论文列表 (Treeview) ──
+        tree_frame = tk.Frame(self._lib_tab, bg=COLORS["bg_card"],
+                              highlightbackground=COLORS["border_light"],
+                              highlightthickness=1)
+        tree_frame.grid(row=1, column=0, sticky=tk.NSEW)
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+
+        self._lib_columns = {
+            "status":     {"text": "状态", "width": 50, "visible": True},
+            "title":      {"text": "标题", "width": 320, "visible": True},
+            "abstract":   {"text": "摘要", "width": 400, "visible": True},
+            "authors":    {"text": "作者", "width": 200, "visible": True},
+            "journal":    {"text": "期刊", "width": 200, "visible": False},
+            "doi":        {"text": "DOI", "width": 240, "visible": False},
+            "pub_date":   {"text": "发表时间", "width": 100, "visible": False},
+            "keywords":   {"text": "关键词", "width": 160, "visible": False},
+            "task_name":  {"text": "来源任务", "width": 130, "visible": False},
+        }
+        visible_cols = [k for k, v in self._lib_columns.items() if v["visible"]]
+        self._lib_tree = ttk.Treeview(tree_frame, columns=list(self._lib_columns.keys()),
+                                      show="headings", height=20,
+                                      selectmode="browse")
+        self._lib_tree.grid(row=0, column=0, sticky=tk.NSEW)
+
+        self._lib_sort_col = None
+        self._lib_sort_rev = False
+
+        for key, cfg in self._lib_columns.items():
+            self._lib_tree.heading(key, text=cfg["text"],
+                                   command=lambda k=key: self._sort_library(k))
+            self._lib_tree.column(key, width=cfg["width"], minwidth=40,
+                                  stretch=(key == "title"))
+
+        self._lib_tree["displaycolumns"] = visible_cols
+
+        # 滚动条
+        tree_v_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL,
+                                      command=self._lib_tree.yview)
+        tree_v_scroll.grid(row=0, column=1, sticky=tk.NS)
+        tree_h_scroll = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL,
+                                      command=self._lib_tree.xview)
+        tree_h_scroll.grid(row=1, column=0, sticky=tk.EW)
+        self._lib_tree.configure(yscrollcommand=tree_v_scroll.set,
+                                 xscrollcommand=tree_h_scroll.set)
+
+        # Treeview 样式美化：行高加大、交替行色（通过 tag 实现）
+        style = ttk.Style()
+        style.configure("Treeview", rowheight=38, font=FONT_BODY,
+                        background="#FFFFFF", fieldbackground="#FFFFFF",
+                        foreground=COLORS["text_body"])
+        style.configure("Treeview.Heading", font=FONT_BODY_BOLD,
+                        background=COLORS["bg_card"], foreground=COLORS["text_title"],
+                        relief="flat", borderwidth=0, padding=(8, 6))
+        style.map("Treeview", background=[("selected", COLORS["selected_bg"])],
+                  foreground=[("selected", COLORS["selected_fg"])])
+
+        # 行点击 → 摘要弹窗
+        self._lib_tree.bind("<ButtonRelease-1>", self._on_lib_tree_click)
+        # 双击 → 弹出摘要
+        self._lib_tree.bind("<Double-1>", self._on_lib_tree_double_click)
+        # 选中 → 标记行 tag
+        self._lib_tree.bind("<<TreeviewSelect>>", self._on_lib_tree_select)
+
+        # ── 底部统计栏 ──
+        stats_frame = tk.Frame(self._lib_tab, bg=COLORS["bg_card"],
+                               highlightbackground=COLORS["border_light"],
+                               highlightthickness=1)
+        stats_frame.grid(row=2, column=0, sticky=tk.EW, pady=(8, 0))
+        self._lib_stats_var = tk.StringVar(value="总计: 0 篇")
+        tk.Label(stats_frame, textvariable=self._lib_stats_var,
+                 font=FONT_CAPTION, fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_card"], anchor=tk.W).pack(side=tk.LEFT, padx=16, pady=6)
+
+    def _on_lib_tree_select(self, event=None):
+        """选中行时设置 tag（防递归保护）"""
+        if getattr(self, '_lib_tagging', False):
+            return
+        self._lib_tagging = True
+        try:
+            self._apply_lib_tags()
+        finally:
+            self._lib_tagging = False
+
+    def _sort_library(self, col_key):
+        """列排序：点击一次升序，再点降序，第三次恢复原序"""
+        if self._lib_sort_col == col_key:
+            if not self._lib_sort_rev:
+                self._lib_sort_rev = True
+            else:
+                self._lib_sort_col = None
+                self._lib_sort_rev = False
+        else:
+            self._lib_sort_col = col_key
+            self._lib_sort_rev = False
+        self._refresh_library()
+
+    def _apply_lib_tags(self):
+        """为 Treeview 行设置交替色和选中高亮"""
+        for i, item in enumerate(self._lib_tree.get_children()):
+            tags = ["evenrow" if i % 2 == 0 else "oddrow"]
+            self._lib_tree.item(item, tags=tags)
+        style = ttk.Style()
+        style.configure("evenrow.Treeview", background="#FFFFFF")
+        style.configure("oddrow.Treeview", background="#F5F5F7")
+        style.map("Treeview",
+                  background=[("selected", COLORS["selected_bg"])],
+                  foreground=[("selected", COLORS["selected_fg"])])
+
+    def _show_column_menu(self, event=None):
+        """弹出列设置菜单"""
+        if not hasattr(self, '_col_vars'):
+            self._col_vars = {}
+        menu = tk.Menu(self.root, tearoff=0, font=FONT_BODY,
+                       bg=COLORS["bg_card"], fg=COLORS["text_body"])
+        for key, cfg in self._lib_columns.items():
+            if key == "status":
+                continue
+            if key not in self._col_vars:
+                self._col_vars[key] = tk.BooleanVar(value=cfg["visible"])
+            menu.add_checkbutton(label=cfg["text"],
+                                 variable=self._col_vars[key],
+                                 command=lambda k=key: self._toggle_column(k))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _toggle_column(self, col_key: str):
+        """切换列的显隐"""
+        self._lib_columns[col_key]["visible"] = not self._lib_columns[col_key]["visible"]
+        visible = [k for k, v in self._lib_columns.items() if v["visible"]]
+        self._lib_tree["displaycolumns"] = visible
+
+    def _refresh_library(self):
+        """刷新书架列表"""
+        from core.library import query_papers, get_stats, get_all_task_names
+
+        # 刷新任务下拉列表（每次刷新时更新）
+        task_names = get_all_task_names()
+        current_task_val = self._lib_task_var.get()
+        self._lib_task_combo["values"] = ["全部"] + task_names
+        if current_task_val not in ["全部"] + task_names:
+            self._lib_task_var.set("全部")
+
+        # 获取筛选条件
+        status_map = {"全部": None, "待读": "pending", "已读": "read", "排除": "excluded"}
+        status = status_map.get(self._lib_status_var.get(), None)
+        search_text = self._lib_search_var.get().strip() or None
+        task_filter = self._lib_task_var.get()
+        task_name = None if task_filter in ("全部", "") else task_filter
+
+        papers = query_papers(status=status, search_text=search_text, task_name=task_name)
+
+        # 排序
+        if self._lib_sort_col and self._lib_columns.get(self._lib_sort_col):
+            key = self._lib_sort_col
+            rev = self._lib_sort_rev
+            try:
+                papers.sort(key=lambda p: (p.get(key if key != "pub_date" else "pub_date", "") or "").lower(), reverse=rev)
+            except Exception:
+                pass
+
+        # 清空并填充
+        for item in self._lib_tree.get_children():
+            self._lib_tree.delete(item)
+
+        status_icons = {"pending": "○", "read": "●", "excluded": "✕"}
+        for p in papers:
+            s = status_icons.get(p.get("status", "pending"), "○")
+            title = p.get("title", "")
+            abstract = p.get("abstract", "")
+            if abstract and len(abstract) > 120:
+                abstract = abstract[:120] + "..."
+            authors = p.get("authors", "")
+            # 简化作者显示
+            if authors and len(authors) > 30:
+                parts = [a.strip() for a in authors.replace(";", ",").split(",") if a.strip()]
+                if len(parts) > 2:
+                    authors = parts[0] + ", " + parts[1] + ", et al."
+
+            values = {
+                "status": s,
+                "title": title,
+                "abstract": abstract,
+                "authors": authors,
+                "journal": p.get("container_title", ""),
+                "doi": p.get("doi", ""),
+                "pub_date": p.get("pub_date", ""),
+                "keywords": ", ".join(p.get("matched_keywords", [])),
+                "task_name": p.get("task_name", ""),
+            }
+            row_values = [values.get(k, "") for k in self._lib_columns.keys()]
+            tag = "evenrow" if i % 2 == 0 else "oddrow"
+            self._lib_tree.insert("", tk.END, iid=p["id"], values=row_values, tags=(tag,))
+
+        # 空状态引导
+        if not papers:
+            self._lib_tree.insert("", tk.END,
+                                  values=["", "📚  文献书架是空的", "执行检索后，论文会自动出现在这里", ""])
+            self._lib_tree.tag_configure("empty_hint", foreground=COLORS["text_hint"])
+            for item in self._lib_tree.get_children():
+                self._lib_tree.item(item, tags=("empty_hint",))
+                break
+
+        # 更新统计
+        stats = get_stats()
+        self._lib_stats_var.set(
+            f"总计: {stats['total']} 篇  |  "
+            f"已读: {stats['read']}  |  "
+            f"待读: {stats['pending']}  |  "
+            f"排除: {stats['excluded']}"
+        )
+
+    def _on_lib_tree_click(self, event):
+        """处理书架 Treeview 点击事件"""
+        region = self._lib_tree.identify_region(event.x, event.y)
+        col = self._lib_tree.identify_column(event.x)
+        item_id = self._lib_tree.identify_row(event.y)
+        if not item_id:
+            return
+
+        # 点击状态列 → 切换状态
+        if region == "cell" and col == "#1":
+            self._cycle_status(item_id)
+            return
+
+        # 点击任何其他列 → 弹出全文摘要
+        self._show_abstract_popup(item_id)
+
+    def _on_lib_tree_double_click(self, event):
+        """双击 → 弹出摘要"""
+        item_id = self._lib_tree.identify_row(event.y)
+        if item_id:
+            self._show_abstract_popup(item_id)
+
+    def _cycle_status(self, paper_id: str):
+        """循环切换论文阅读状态: pending → read → excluded → pending"""
+        from core.library import get_paper, update_paper_status
+        paper = get_paper(paper_id)
+        if not paper:
+            return
+        current = paper.get("status", "pending")
+        next_status = {"pending": "read", "read": "excluded", "excluded": "pending"}
+        new_status = next_status.get(current, "pending")
+        update_paper_status(paper_id, new_status)
+        self._refresh_library()
+
+    def _show_abstract_popup(self, paper_id: str):
+        """显示摘要详情弹窗（前置、可复制、可关闭、支持上下篇导航）"""
+        from core.library import get_paper, query_papers, update_paper_status
+
+        # 获取当前论文和所有论文列表（用于上下篇导航）
+        paper = get_paper(paper_id)
+        if not paper:
+            return
+        all_papers = query_papers(
+            status=self._lib_status_var.get() if self._lib_status_var.get() != "全部" else None,
+            search_text=self._lib_search_var.get().strip() or None,
+        )
+        paper_ids = [p["id"] for p in all_papers]
+        current_idx = paper_ids.index(paper_id) if paper_id in paper_ids else -1
+
+        win = tk.Toplevel(self.root)
+        win.title(paper.get("title", "摘要详情")[:60])
+        win.geometry("620x580")
+        win.minsize(480, 400)
+        win.configure(bg=COLORS["bg_page"])
+        win.attributes("-topmost", True)
+
+        win.update_idletasks()
+        x = (win.winfo_screenwidth() - 620) // 2
+        y = (win.winfo_screenheight() - 580) // 2
+        win.geometry(f"+{x}+{y}")
+
+        container = tk.Frame(win, bg=COLORS["bg_page"], padx=20, pady=16)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        # 标题行（标题 + 状态切换）
+        title_frame = tk.Frame(container, bg=COLORS["bg_page"])
+        title_frame.pack(fill=tk.X, pady=(0, 12))
+        title_frame.columnconfigure(0, weight=1)
+
+        tk.Label(title_frame, text=paper.get("title", ""),
+                 font=FONT_HEADING, fg=COLORS["text_title"],
+                 bg=COLORS["bg_page"], wraplength=420, justify=tk.LEFT,
+                 anchor=tk.W).grid(row=0, column=0, sticky=tk.W)
+
+        # 状态按钮（右上角）
+        status = paper.get("status", "pending")
+        status_icons_map = {"pending": "○ 待读", "read": "● 已读", "excluded": "✕ 排除"}
+        next_status_map = {"pending": "read", "read": "excluded", "excluded": "pending"}
+
+        def _popup_cycle():
+            new_s = next_status_map.get(status, "pending")
+            update_paper_status(paper_id, new_s)
+            win.destroy()
+            self._refresh_library()
+
+        status_btn = tk.Label(title_frame, text=status_icons_map.get(status, "○ 待读"),
+                               font=FONT_CAPTION, fg=COLORS["primary"],
+                               bg=COLORS["bg_page"], cursor="hand2",
+                               padx=8, pady=2)
+        status_btn.grid(row=0, column=1, padx=(8, 0))
+        status_btn.bind("<Button-1>", lambda e: _popup_cycle())
+        # hover: 显示切换提示
+        status_hints = {"pending": "点击标记为已读", "read": "点击标记为排除", "excluded": "点击恢复为待读"}
+        _status_hint = tk.StringVar(value=status_hints.get(status, ""))
+        hint_label = tk.Label(title_frame, textvariable=_status_hint,
+                               font=FONT_CAPTION, fg=COLORS["text_hint"],
+                               bg=COLORS["bg_page"])
+        hint_label.grid(row=0, column=2, padx=(4, 0))
+        status_btn.bind("<Enter>", lambda e: _status_hint.set(status_hints.get(
+            paper.get("status", "pending"), "")))
+        status_btn.bind("<Leave>", lambda e: _status_hint.set(""))
+
+        # ── 元数据卡片（grid 布局） ──
+        meta_card = tk.Frame(container, bg=COLORS["bg_card"],
+                             highlightbackground=COLORS["border_light"],
+                             highlightthickness=1)
+        meta_card.pack(fill=tk.X, pady=(0, 12))
+        meta_card.columnconfigure(1, weight=1)
+
+        meta_fields = [
+            ("📄 期刊", paper.get("container_title", "")),
+            ("✍️ 作者", paper.get("authors", "")),
+            ("📅 日期", paper.get("pub_date", "")),
+            ("🔗 DOI", paper.get("doi", "")),
+            ("🏷 关键词", ", ".join(paper.get("matched_keywords", []))),
+        ]
+        for mi, (label, value) in enumerate(meta_fields):
+            if not value:
+                continue
+            tk.Label(meta_card, text=label, font=FONT_CAPTION,
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]
+                     ).grid(row=mi, column=0, sticky=tk.W, padx=(12, 8), pady=4)
+            tk.Label(meta_card, text=value, font=FONT_BODY,
+                     fg=COLORS["text_body"], bg=COLORS["bg_card"],
+                     anchor=tk.W, wraplength=420
+                     ).grid(row=mi, column=1, sticky=tk.W, padx=(0, 12), pady=4)
+
+        # ── 摘要文本 ──
+        text_frame = tk.Frame(container, bg=COLORS["bg_page"])
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, font=FONT_BODY,
+                              fg=COLORS["text_body"], bg=COLORS["bg_card"],
+                              relief="flat", borderwidth=0,
+                              padx=14, pady=12,
+                              selectbackground=COLORS["selected_bg"],
+                              selectforeground=COLORS["selected_fg"])
+        text_widget.grid(row=0, column=0, sticky=tk.NSEW)
+
+        text_scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL,
+                                    command=text_widget.yview)
+        text_scroll.grid(row=0, column=1, sticky=tk.NS)
+        text_widget.configure(yscrollcommand=text_scroll.set)
+
+        abstract = paper.get("abstract", "无摘要")
+        text_widget.insert(tk.END, abstract + "\n\n")
+        abstract_cn = paper.get("abstract_cn", "")
+        if abstract_cn:
+            text_widget.insert(tk.END, "─" * 40 + "\n\n中文摘要:\n\n" + abstract_cn)
+        text_widget.configure(state=tk.DISABLED)
+
+        # ── 底部导航栏 ──
+        nav_frame = tk.Frame(container, bg=COLORS["bg_page"])
+        nav_frame.pack(fill=tk.X, pady=(12, 0))
+
+        # 上一篇/下一篇导航
+        def _nav_prev():
+            if current_idx > 0:
+                prev_id = paper_ids[current_idx - 1]
+                win.destroy()
+                self._show_abstract_popup(prev_id)
+
+        def _nav_next():
+            if current_idx < len(paper_ids) - 1:
+                next_id = paper_ids[current_idx + 1]
+                win.destroy()
+                self._show_abstract_popup(next_id)
+
+        ttk.Button(nav_frame, text="◀ 上一篇", style="Secondary.TButton",
+                   command=_nav_prev).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(nav_frame, text="下一篇 ▶", style="Secondary.TButton",
+                   command=_nav_next).pack(side=tk.LEFT)
+
+        # 位置指示
+        pos_text = f"{current_idx + 1} / {len(paper_ids)}"
+        tk.Label(nav_frame, text=pos_text, font=FONT_CAPTION,
+                 fg=COLORS["text_hint"], bg=COLORS["bg_page"]
+                 ).pack(side=tk.LEFT, padx=12)
+
+        ttk.Button(nav_frame, text="关闭", style="Primary.TButton",
+                   command=win.destroy).pack(side=tk.RIGHT)
+
+        # 快捷键
+        win.bind("<Escape>", lambda e: win.destroy())
+        win.bind("<Control-w>", lambda e: win.destroy())
+        win.bind("<Left>", lambda e: _nav_prev() if current_idx > 0 else None)
+        win.bind("<Right>", lambda e: _nav_next() if current_idx < len(paper_ids) - 1 else None)
+
+        # DOI 可点击复制
+        if paper.get("doi"):
+            # 在 meta_card 的 DOI 行添加复制功能
+            for child in meta_card.winfo_children():
+                if isinstance(child, tk.Label) and child.cget("text", "").startswith("🔗"):
+                    child.configure(cursor="hand2")
+                    child.bind("<Button-1>", lambda e: (
+                        win.clipboard_clear(), win.clipboard_append(paper.get("doi", "")),
+                        _status_hint.set("DOI 已复制 ✓")))
+
+    def _export_ris_dialog(self):
+        """导出 RIS 对话框"""
+        from core.library import query_papers, export_ris
+
+        # 选择导出范围
+        choice_win = tk.Toplevel(self.root)
+        choice_win.title("导出到 Zotero")
+        choice_win.geometry("340x220")
+        choice_win.configure(bg=COLORS["bg_page"])
+        choice_win.attributes("-topmost", True)
+        choice_win.resizable(False, False)
+
+        # 居中
+        choice_win.update_idletasks()
+        x = (choice_win.winfo_screenwidth() - 340) // 2
+        y = (choice_win.winfo_screenheight() - 220) // 2
+        choice_win.geometry(f"+{x}+{y}")
+
+        tk.Label(choice_win, text="选择导出范围", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_page"]).pack(pady=(16, 12))
+
+        export_scope = tk.StringVar(value="all")
+        for val, label in [("all", "导出全部论文"), ("pending", "仅导出待读"),
+                           ("read", "仅导出已读"), ("current", "仅导出当前筛选结果")]:
+            tk.Radiobutton(choice_win, text=label, variable=export_scope,
+                           value=val, font=FONT_BODY, fg=COLORS["text_body"],
+                           bg=COLORS["bg_page"], activebackground=COLORS["bg_page"],
+                           anchor=tk.W).pack(fill=tk.X, padx=40, pady=2)
+
+        def _do_export():
+            choice_win.destroy()
+            scope = export_scope.get()
+            if scope == "current":
+                # 使用当前筛选
+                status_map = {"全部": None, "待读": "pending", "已读": "read", "排除": "excluded"}
+                status = status_map.get(self._lib_status_var.get(), None)
+                search_text = self._lib_search_var.get().strip() or None
+                papers = query_papers(status=status, search_text=search_text)
+            elif scope in ("pending", "read"):
+                papers = query_papers(status=scope)
+            else:
+                papers = query_papers()
+
+            if not papers:
+                messagebox.showinfo("提示", "没有可导出的论文")
+                return
+
+            from tkinter import filedialog
+            fp = filedialog.asksaveasfilename(
+                title="保存 RIS 文件",
+                defaultextension=".ris",
+                filetypes=[("RIS 文件", "*.ris"), ("所有文件", "*.*")],
+                initialfile="hongxun_export.ris",
+            )
+            if not fp:
+                return
+            export_ris(papers, fp)
+            messagebox.showinfo("导出成功",
+                                f"已导出 {len(papers)} 篇论文到:\n{fp}\n\n"
+                                "打开 Zotero → 文件 → 导入 → 选择此文件即可导入。")
+
+        btn_frame = tk.Frame(choice_win, bg=COLORS["bg_page"])
+        btn_frame.pack(pady=(12, 0))
+        ttk.Button(btn_frame, text="确定", style="Primary.TButton",
+                   command=_do_export).pack(side=tk.LEFT, padx=8)
+        ttk.Button(btn_frame, text="取消", style="Secondary.TButton",
+                   command=choice_win.destroy).pack(side=tk.LEFT, padx=8)
+
+    def _on_tab_changed(self, event=None):
+        """Notebook 标签切换时刷新书架"""
+        if not hasattr(self, 'notebook'):
+            return
+        current = self.notebook.index(self.notebook.select())
+        if current == 1:  # 文献书架
+            self._refresh_library()
+
     # ===================== 检索执行 =====================
     def _run_history(self):
         if not self.current_task_id:
@@ -1644,7 +2272,9 @@ class PaperMonitorApp:
         self.progress_var.set(0.0)
         self.progress_label_var.set("0% 准备中")
         self.status_var.set("正在执行检索，请稍候...")
-        self._progress_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 0), before=self.root.pack_slaves()[-1])
+        # 隐藏 idle 线，显示进度条
+        self._progress_idle.pack_forget()
+        self._progress_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 0))
         # 显示取消按钮
         self._cancel_search_btn.pack(side=tk.RIGHT, padx=(0, 24))
         self.root.update_idletasks()
@@ -1662,9 +2292,23 @@ class PaperMonitorApp:
         def worker():
             try:
                 task = get_task(self.current_task_id)
-                run_history_search(self.current_task_id, task, file_path,
-                                   progress_callback=_progress)
-                self.root.after(0, lambda: self._on_history_done(file_path))
+                result = run_history_search(self.current_task_id, task, file_path,
+                                            progress_callback=_progress)
+                if isinstance(result, tuple):
+                    fp, papers = result
+                    # 自动入库到文献书架
+                    task_name = task.get("name", "")
+                    from core.library import import_papers
+                    count = import_papers(papers, task_name)
+                    if count > 0:
+                        self.root.after(0, lambda c=count: self.status_var.set(
+                            f"{ICONS['check']} 检索完成，{count} 篇新论文已收录到文献书架"))
+                    else:
+                        self.root.after(0, lambda: self.status_var.set(
+                            f"{ICONS['check']} 检索完成，未发现新论文（已在书架中）"))
+                else:
+                    fp = result
+                self.root.after(0, lambda: self._on_history_done(fp))
             except KeyboardInterrupt:
                 self.root.after(0, lambda: self._on_history_cancelled())
             except Exception as e:
@@ -1688,35 +2332,78 @@ class PaperMonitorApp:
         self._executing = False
         self._history_running = False
         self._progress_frame.pack_forget()
-        try:
-            self._cancel_search_btn.pack_forget()
-        except Exception:
-            pass
-        self.status_var.set(f"{ICONS['check']} 历史检索已完成，结果已保存")
-        messagebox.showinfo("完成", f"检索完成，结果已保存到：\n{file_path}")
+        self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
+        self._cancel_search_btn.pack_forget()
+        self.status_var.set(f"{ICONS['check']} 检索完成")
+        # Toast 通知替代弹窗
+        self._show_toast(f"{ICONS['check']} 检索完成，结果已保存到文献书架",
+                         action_text="查看书架", action_cmd=self._switch_to_library)
+
+    def _show_toast(self, message, action_text=None, action_cmd=None, duration=3):
+        """右下角 toast 通知，自动消失"""
+        toast = tk.Toplevel(self.root)
+        toast.overrideredirect(True)
+        toast.attributes("-topmost", True)
+        toast.configure(bg=COLORS["bg_page"])
+
+        # 内容容器（圆角卡片）
+        frame = tk.Frame(toast, bg=COLORS["bg_card"],
+                         highlightbackground=COLORS["border_light"],
+                         highlightthickness=1)
+        frame.pack(padx=1, pady=1)
+
+        tk.Label(frame, text=message, font=FONT_BODY,
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"],
+                 anchor=tk.W).pack(side=tk.LEFT, padx=(14, 8), pady=10)
+
+        if action_text:
+            btn = tk.Label(frame, text=action_text, font=FONT_BODY_BOLD,
+                           fg=COLORS["primary"], bg=COLORS["bg_card"],
+                           cursor="hand2")
+            btn.pack(side=tk.LEFT, padx=(0, 14), pady=10)
+            btn.bind("<Button-1>", lambda e: (toast.destroy(), action_cmd() if action_cmd else None))
+            btn.bind("<Enter>", lambda e: btn.configure(fg=COLORS["primary_hover"]))
+            btn.bind("<Leave>", lambda e: btn.configure(fg=COLORS["primary"]))
+
+        # 右上角关闭
+        close_btn = tk.Label(frame, text="✕", font=FONT_CAPTION,
+                             fg=COLORS["text_hint"], bg=COLORS["bg_card"],
+                             cursor="hand2")
+        close_btn.pack(side=tk.RIGHT, padx=(4, 8), pady=10)
+        close_btn.bind("<Button-1>", lambda e: toast.destroy())
+
+        toast.update_idletasks()
+        w = toast.winfo_reqwidth()
+        h = toast.winfo_reqheight()
+        x = self.root.winfo_x() + self.root.winfo_width() - w - 20
+        y = self.root.winfo_y() + self.root.winfo_height() - h - 60
+        toast.geometry(f"+{x}+{y}")
+
+        # 自动消失
+        self.root.after(duration * 1000, lambda: toast.destroy() if toast.winfo_exists() else None)
+
+    def _switch_to_library(self):
+        """切换到文献书架 Tab"""
+        if hasattr(self, 'notebook'):
+            self.notebook.select(1)
 
     def _on_history_cancelled(self):
         """检索被用户取消"""
         self._executing = False
         self._history_running = False
         self._progress_frame.pack_forget()
-        try:
-            self._cancel_search_btn.pack_forget()
-        except Exception:
-            pass
-        self.status_var.set(f"{ICONS['cancel']} 历史检索已取消")
-        messagebox.showinfo("已取消", "检索已被用户取消。")
+        self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
+        self._cancel_search_btn.pack_forget()
+        self.status_var.set(f"{ICONS['cancel']} 检索已取消")
 
     def _on_history_error(self, error_msg):
         self._executing = False
         self._history_running = False
         self._progress_frame.pack_forget()
-        try:
-            self._cancel_search_btn.pack_forget()
-        except Exception:
-            pass
-        self.status_var.set(f"{ICONS['error']} 历史检索执行失败")
-        messagebox.showerror("错误", f"检索过程中发生错误：\n{error_msg}")
+        self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
+        self._cancel_search_btn.pack_forget()
+        self.status_var.set(f"{ICONS['error']} 检索出错")
+        self._show_toast(f"{ICONS['error']} 检索失败: {error_msg[:60]}", duration=5)
 
     def _cancel_current_search(self):
         """取消当前正在执行的检索任务"""
@@ -1945,7 +2632,8 @@ class PaperMonitorApp:
         self.status_var.set(f"每日推送启动：正在检索 {len(enabled_tasks)} 个任务近一周数据...")
         self.progress_var.set(0.0)
         self.progress_label_var.set("0% 近一周检索中...")
-        self._progress_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 0), before=self.root.pack_slaves()[-1])
+        self._progress_idle.pack_forget()
+        self._progress_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 0))
         self.root.update_idletasks()
 
         def _progress(ratio, message):
@@ -2179,6 +2867,16 @@ class PaperMonitorApp:
                 self._daily_push_btn.configure(
                     text=f" {ICONS['play']}  每日推送(关)",
                     style="Secondary.TButton")
+        # 同时更新侧栏底部推送状态
+        if hasattr(self, '_sidebar_push_label') and self._sidebar_push_label.winfo_exists():
+            if running:
+                self._sidebar_push_label.configure(
+                    text=f"{ICONS['dot_on']} 每日推送 · 运行中",
+                    fg=COLORS["success"])
+            else:
+                self._sidebar_push_label.configure(
+                    text=f"{ICONS['dot_off']} 每日推送未启动",
+                    fg=COLORS["text_secondary"])
 
     def _require_activation(self, feature_name: str) -> bool:
         """检查是否已激活，未激活则弹出引导。返回是否已激活。"""
@@ -2553,17 +3251,15 @@ class PaperMonitorApp:
             self.smtp_server_var.set(configs[0]["server"])
             self.port_var.set(configs[0]["port"])
 
-    def _toggle_auth_code_visibility(self, event=None):
+    def _toggle_auth_code_visibility(self):
         """切换 SMTP 授权码的显示/隐藏"""
         self._auth_code_visible = not self._auth_code_visible
         if self._auth_code_visible:
             self.auth_code_entry.configure(show="")
-            self.auth_code_entry._show = ""  # 同步 PlaceholderEntry 内部状态
-            self._auth_code_toggle_btn.configure(text="🙈")
+            self.auth_code_entry._show = ""
         else:
             self.auth_code_entry.configure(show="*")
             self.auth_code_entry._show = "*"
-            self._auth_code_toggle_btn.configure(text="👁")
 
     def _update_email_badge(self):
         cfg = load_email_config()
