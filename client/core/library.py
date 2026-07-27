@@ -112,6 +112,18 @@ def update_paper_status(paper_id: str, status: str):
     save_library(lib)
 
 
+def batch_update_status(ids: list[str], status: str) -> int:
+    """批量更新论文阅读状态。返回更新的数量。"""
+    lib = load_library()
+    count = 0
+    for p in lib["papers"]:
+        if p["id"] in ids:
+            p["status"] = status
+            count += 1
+    save_library(lib)
+    return count
+
+
 def delete_paper(paper_id: str):
     """从书架删除一篇论文"""
     lib = load_library()
