@@ -10,6 +10,7 @@
 - **支持平台**：macOS 10.15+ / Windows 10/11 64位
 - **macOS 启动**：双击 `HONGXUN-ZZU.app`
 - **Windows 启动**：双击 `dist/HONGXUN/HONGXUN.exe`（需先打包）
+- **版本**：1.3.2-ZZU
 
 ## 目录结构
 
