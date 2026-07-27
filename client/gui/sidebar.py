@@ -1,5 +1,5 @@
 """
-鸿讯 HONGXUN · 侧栏（v2 — 紧凑版 + 每日推送底部集成）
+鸿讯 HONGXUN · 侧栏（v3 — 精简紧凑版）
 """
 
 import tkinter as tk
@@ -8,15 +8,17 @@ from gui.theme import COLORS, ICONS, FONT_BODY, FONT_BODY_BOLD, FONT_CAPTION, FO
 
 
 class TaskCard(tk.Frame):
-    """紧凑任务卡片（38px，点 + 名 + 状态标签 + 更多菜单）"""
+    """任务卡片（32px 紧凑，无状态标签，支持运行指示）"""
 
     def __init__(self, master, task_id, task_name, enabled=True,
-                 selected=False, on_click=None, on_rename=None, on_context=None,
+                 selected=False, running=False, on_click=None,
+                 on_rename=None, on_context=None,
                  on_search=None, on_delete=None, on_copy=None, **kwargs):
         self._task_id = task_id
         self._task_name = task_name
         self._enabled = enabled
         self._selected = selected
+        self._running = running
         self._on_click = on_click
         self._on_rename = on_rename
         self._on_context = on_context
@@ -34,46 +36,54 @@ class TaskCard(tk.Frame):
         bg = COLORS["selected_bg"] if self._selected else COLORS["sidebar_bg"]
         self.configure(bg=bg)
 
-        # 左侧 3px 蓝色边条（选中时显示）
+        # 选中蓝色边条
         if self._selected:
-            accent_bar = tk.Frame(self, bg=COLORS["primary"], width=3)
-            accent_bar.pack(side=tk.LEFT, fill=tk.Y)
+            tk.Frame(self, bg=COLORS["primary"], width=3).pack(side=tk.LEFT, fill=tk.Y)
 
-        # 行容器
         row = tk.Frame(self, bg=bg)
-        row.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 6), pady=6)
+        row.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 4), pady=4)
 
-        # 状态点 + 任务名（左）
-        dot_color = COLORS["dot_on"] if self._enabled else COLORS["dot_off"]
-        tk.Label(row, text="●", font=FONT_CAPTION,
-                 fg=dot_color, bg=bg).pack(side=tk.LEFT, padx=(0, 5))
+        # 状态点
+        if self._running:
+            dot_color = COLORS["primary"]
+            dot_text = "◉"  # 实心运行中
+        else:
+            dot_color = COLORS["dot_on"] if self._enabled else COLORS["dot_off"]
+            dot_text = "●"
+        tk.Label(row, text=dot_text, font=FONT_CAPTION,
+                 fg=dot_color, bg=bg).pack(side=tk.LEFT, padx=(0, 4))
+
+        # 任务名
         tk.Label(row, text=self._task_name,
                  font=FONT_BODY_BOLD,
                  fg=COLORS["text_title"] if self._enabled else COLORS["text_hint"],
                  bg=bg, anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # 状态标签 + 更多菜单（右）
-        status_text = "运行中" if self._enabled else "禁用"
-        status_color = COLORS["success"] if self._enabled else COLORS["text_hint"]
-        tk.Label(row, text=status_text,
-                 font=FONT_CAPTION,
-                 fg=status_color,
-                 bg=bg).pack(side=tk.RIGHT, padx=(4, 0))
-
-        # 「⋯」更多按钮
+        # 「⋯」更多
         self._more_btn = tk.Label(row, text="⋯", font=FONT_CAPTION,
                                   fg=COLORS["text_hint"], bg=bg, cursor="hand2",
-                                  padx=2)
-        self._more_btn.pack(side=tk.RIGHT, padx=(2, 0))
+                                  padx=4)
+        self._more_btn.pack(side=tk.RIGHT)
         self._more_btn.bind("<Button-1>", self._show_more_menu)
 
-        # 事件转发
         for w in [row] + row.winfo_children():
             if w != self._more_btn:
                 w.bind("<Button-1>", self._handle_click, add="+")
 
+    def set_running(self, running):
+        """外部设置运行状态，触发重绘"""
+        self._running = running
+        for w in self.winfo_children():
+            w.destroy()
+        self._build_card()
+
+    def set_selected(self, selected):
+        self._selected = selected
+        for w in self.winfo_children():
+            w.destroy()
+        self._build_card()
+
     def _show_more_menu(self, event):
-        """弹出快捷操作菜单"""
         menu = tk.Menu(self, tearoff=0, font=FONT_BODY,
                        bg=COLORS["bg_card"], fg=COLORS["text_body"])
         if self._enabled:
@@ -82,23 +92,16 @@ class TaskCard(tk.Frame):
         menu.add_command(label="📋 复制任务",
                          command=lambda: self._on_copy(self._task_id) if self._on_copy else None)
         menu.add_separator()
-        label = "⏸ 禁用任务" if self._enabled else "▶ 启用任务"
+        label = "⏸ 禁用" if self._enabled else "▶ 启用"
         menu.add_command(label=label,
                          command=lambda: self._on_context(self._task_id, event))
         menu.add_separator()
-        menu.add_command(label="🗑 删除任务", foreground=COLORS["danger"],
+        menu.add_command(label="🗑 删除", foreground=COLORS["danger"],
                          command=lambda: self._on_delete(self._task_id) if self._on_delete else None)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
-
-    def set_selected(self, selected):
-        """重绘卡片——选中时加蓝色边条"""
-        self._selected = selected
-        for w in self.winfo_children():
-            w.destroy()
-        self._build_card()
 
     def _handle_click(self, event):
         if self._on_click:
@@ -118,7 +121,7 @@ class TaskCard(tk.Frame):
 
 
 class TaskSidebar(ttk.Frame):
-    """侧栏：任务列表面板 + 底部推送控制"""
+    """侧栏：任务列表 + 底部紧凑推送控制"""
 
     def __init__(self, master, on_select=None, on_new=None,
                  on_toggle_push=None,
@@ -135,32 +138,31 @@ class TaskSidebar(ttk.Frame):
         self._task_cards = {}
         self._task_order = []
         self._push_running = False
+        self._running_task_id = None
 
         self._build_ui()
 
     def _build_ui(self):
         self.configure(style="TFrame")
 
-        # ═══ 标题行 ═══
+        # 标题行
         title_row = tk.Frame(self, bg=COLORS["sidebar_bg"])
-        title_row.pack(fill=tk.X, padx=10, pady=(12, 0))
-        tk.Label(title_row, text="📋 监控任务",
+        title_row.pack(fill=tk.X, padx=10, pady=(10, 0))
+        tk.Label(title_row, text="📋 监控",
                  font=FONT_HEADING, fg=COLORS["text_title"],
                  bg=COLORS["sidebar_bg"]).pack(side=tk.LEFT)
-        self._new_btn = tk.Label(title_row,
-                                 text="+",
+        self._new_btn = tk.Label(title_row, text="+",
                                  font=FONT_HEADING,
                                  fg=COLORS["primary"],
                                  bg=COLORS["sidebar_bg"],
-                                 cursor="hand2",
-                                 padx=6)
+                                 cursor="hand2", padx=6)
         self._new_btn.pack(side=tk.RIGHT)
         self._new_btn.bind("<Button-1>",
                            lambda e: self._on_new_callback() if self._on_new_callback else None)
 
-        tk.Frame(self, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=10, pady=(8, 4))
+        tk.Frame(self, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=10, pady=(6, 4))
 
-        # ═══ 任务列表（滚动） ═══
+        # 任务列表（滚动）
         self._canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0,
                                  bg=COLORS["sidebar_bg"])
         scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self._canvas.yview)
@@ -177,73 +179,59 @@ class TaskSidebar(ttk.Frame):
             self._canvas.itemconfig(self._canvas_window, width=max(event.width, 180))
         self._canvas.bind("<Configure>", _configure_width)
 
-        # ═══ 底部：每日推送控制 ═══
-        push_section = tk.Frame(self, bg=COLORS["sidebar_bg"])
-        push_section.pack(fill=tk.X, side=tk.BOTTOM, padx=0, pady=0)
+        # ═══ 底部：推送控制（单行紧凑） ═══
+        push_bar = tk.Frame(self, bg=COLORS["sidebar_bg"])
+        push_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        tk.Frame(push_bar, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=10)
 
-        tk.Frame(push_section, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=10)
+        push_row = tk.Frame(push_bar, bg=COLORS["sidebar_bg"])
+        push_row.pack(fill=tk.X, padx=10, pady=6)
 
-        push_inner = tk.Frame(push_section, bg=COLORS["sidebar_bg"])
-        push_inner.pack(fill=tk.X, padx=10, pady=(8, 10))
-
-        # 标题行
-        push_title_row = tk.Frame(push_inner, bg=COLORS["sidebar_bg"])
-        push_title_row.pack(fill=tk.X)
-        tk.Label(push_title_row, text="📧 每日推送",
-                 font=FONT_HEADING, fg=COLORS["text_title"],
-                 bg=COLORS["sidebar_bg"]).pack(side=tk.LEFT)
-
-        # 状态 + 操作行
-        push_action_row = tk.Frame(push_inner, bg=COLORS["sidebar_bg"])
-        push_action_row.pack(fill=tk.X, pady=(4, 0))
-
-        self._push_status_label = tk.Label(push_action_row,
-                                           text="○ 已暂停",
-                                           font=FONT_BODY_BOLD,
-                                           fg=COLORS["text_secondary"],
+        self._push_status_label = tk.Label(push_row, text="○",
+                                           font=FONT_CAPTION,
+                                           fg=COLORS["dot_off"],
                                            bg=COLORS["sidebar_bg"])
-        self._push_status_label.pack(side=tk.LEFT)
+        self._push_status_label.pack(side=tk.LEFT, padx=(0, 4))
 
-        self._push_toggle_btn = tk.Label(push_action_row,
-                                         text="启动",
-                                         font=FONT_BODY_BOLD,
+        self._push_status_text = tk.Label(push_row, text="推送已暂停",
+                                          font=FONT_CAPTION,
+                                          fg=COLORS["text_secondary"],
+                                          bg=COLORS["sidebar_bg"])
+        self._push_status_text.pack(side=tk.LEFT)
+
+        self._push_toggle_btn = tk.Label(push_row, text="启动",
+                                         font=FONT_CAPTION,
                                          fg=COLORS["primary"],
                                          bg=COLORS["sidebar_bg"],
-                                         cursor="hand2",
-                                         padx=10, pady=2)
+                                         cursor="hand2", padx=6)
         self._push_toggle_btn.pack(side=tk.RIGHT)
         self._push_toggle_btn.bind("<Button-1>",
                                    lambda e: self._on_toggle_push() if self._on_toggle_push else None)
-        self._push_toggle_btn.bind("<Enter>",
-                                   lambda e: self._push_toggle_btn.configure(fg=COLORS["primary_hover"]))
-        self._push_toggle_btn.bind("<Leave>",
-                                   lambda e: self._push_toggle_btn.configure(fg=COLORS["primary"]
-                                   if not self._push_running else COLORS["danger"]))
-
-        # 下次执行时间
-        self._next_run_label = tk.Label(push_inner,
-                                        text="下次：--",
-                                        font=FONT_CAPTION,
-                                        fg=COLORS["text_hint"],
-                                        bg=COLORS["sidebar_bg"],
-                                        anchor=tk.W)
-        self._next_run_label.pack(fill=tk.X)
 
     # ═══ 对外接口 ═══
 
     def set_push_status(self, running, next_run_text=""):
-        """更新推送状态显示"""
         self._push_running = running
         if running:
-            self._push_status_label.configure(text="● 运行中", fg=COLORS["success"])
+            self._push_status_label.configure(text="●", fg=COLORS["success"])
+            self._push_status_text.configure(text="推送运行中", fg=COLORS["success"])
             self._push_toggle_btn.configure(text="暂停", fg=COLORS["danger"])
         else:
-            self._push_status_label.configure(text="○ 已暂停", fg=COLORS["text_secondary"])
+            self._push_status_label.configure(text="○", fg=COLORS["dot_off"])
+            self._push_status_text.configure(text="推送已暂停", fg=COLORS["text_secondary"])
             self._push_toggle_btn.configure(text="启动", fg=COLORS["primary"])
-        self._next_run_label.configure(text=f"下次：{next_run_text}" if next_run_text else "下次：--")
 
-    def set_next_run(self, next_run_str):
-        self._next_run_label.configure(text=f"下次：{next_run_str}")
+    def set_task_running(self, task_id):
+        """标记正在检索的任务，重绘卡片运行状态"""
+        self._running_task_id = task_id
+        for tid, card in self._task_cards.items():
+            card.set_running(tid == task_id)
+
+    def clear_task_running(self):
+        """清除所有任务的运行标记"""
+        self._running_task_id = None
+        for tid, card in self._task_cards.items():
+            card.set_running(False)
 
     def refresh_tasks(self):
         for widget in self._inner.winfo_children():
@@ -258,6 +246,7 @@ class TaskSidebar(ttk.Frame):
                 task_id=tid,
                 task_name=t["name"],
                 enabled=t.get("enabled", True),
+                running=(tid == self._running_task_id),
                 selected=(tid == self._selected_task_id),
                 on_click=self._on_card_click,
                 on_rename=self._on_card_rename,
@@ -281,7 +270,6 @@ class TaskSidebar(ttk.Frame):
     # ═══ 更多菜单回调 ═══
 
     def _on_card_search(self, task_id):
-        """外部通过 set_search_callback 设置"""
         if self._on_select:
             self._on_select(task_id)
 

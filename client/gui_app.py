@@ -998,6 +998,8 @@ class PaperMonitorApp:
 
         self._executing = True
         self._history_running = True
+        # 侧栏标记运行状态
+        self.sidebar.set_task_running(self.current_task_id)
         self.progress_var.set(0.0)
         self.progress_label_var.set("0% 准备中")
         self.status_var.set("正在执行检索，请稍候...")
@@ -1058,6 +1060,7 @@ class PaperMonitorApp:
     def _on_history_done(self, file_path):
         self._executing = False
         self._history_running = False
+        self.sidebar.clear_task_running()
         self._progress_frame.pack_forget()
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
         self._cancel_search_btn.pack_forget()
@@ -1158,6 +1161,7 @@ class PaperMonitorApp:
         """检索被用户取消"""
         self._executing = False
         self._history_running = False
+        self.sidebar.clear_task_running()
         self._progress_frame.pack_forget()
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
         self._cancel_search_btn.pack_forget()
@@ -1166,6 +1170,7 @@ class PaperMonitorApp:
     def _on_history_error(self, error_msg):
         self._executing = False
         self._history_running = False
+        self.sidebar.clear_task_running()
         self._progress_frame.pack_forget()
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
         self._cancel_search_btn.pack_forget()
