@@ -179,88 +179,31 @@ class TaskSidebar(ttk.Frame):
             self._canvas.itemconfig(self._canvas_window, width=max(event.width, 180))
         self._canvas.bind("<Configure>", _configure_width)
 
-        # ═══ 底部：推送信息卡 ═══
-        push_section = tk.Frame(self, bg=COLORS["sidebar_bg"])
-        push_section.pack(fill=tk.X, side=tk.BOTTOM)
-        tk.Frame(push_section, bg=COLORS["border"], height=1).pack(fill=tk.X, padx=0)
+        # ═══ 底部：任务状态摘要（浓缩，不重复推送详情） ═══
+        summary_bar = tk.Frame(self, bg=COLORS["sidebar_bg"])
+        summary_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        tk.Frame(summary_bar, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=10)
 
-        push_card = tk.Frame(push_section, bg=COLORS["bg_card"],
-                             relief="solid", borderwidth=1)
-        push_card.pack(fill=tk.X, padx=8, pady=(6, 10))
+        summary_inner = tk.Frame(summary_bar, bg=COLORS["sidebar_bg"])
+        summary_inner.pack(fill=tk.X, padx=10, pady=6)
 
-        # 标题行
-        push_title_row = tk.Frame(push_card, bg=COLORS["bg_card"])
-        push_title_row.pack(fill=tk.X, padx=10, pady=(8, 2))
-        tk.Label(push_title_row, text="📧 每日推送",
-                 font=FONT_HEADING, fg=COLORS["text_title"],
-                 bg=COLORS["bg_card"]).pack(side=tk.LEFT)
-
-        self._push_toggle_btn_2 = tk.Label(push_title_row, text="启动",
-                                           font=FONT_CAPTION,
-                                           fg=COLORS["primary"],
-                                           bg=COLORS["bg_card"],
-                                           cursor="hand2", padx=8)
-        self._push_toggle_btn_2.pack(side=tk.RIGHT)
-        self._push_toggle_btn_2.bind("<Button-1>",
-                                     lambda e: self._on_toggle_push() if self._on_toggle_push else None)
-
-        # 监控期刊
-        journal_row = tk.Frame(push_card, bg=COLORS["bg_card"])
-        journal_row.pack(fill=tk.X, padx=10, pady=(2, 0))
-        tk.Label(journal_row, text="监控期刊",
-                 font=FONT_CAPTION, fg=COLORS["text_hint"],
-                 bg=COLORS["bg_card"]).pack(side=tk.LEFT)
-        self._journal_count_label = tk.Label(journal_row, text="0 个",
-                                             font=FONT_CAPTION, fg=COLORS["text_body"],
-                                             bg=COLORS["bg_card"])
-        self._journal_count_label.pack(side=tk.RIGHT)
-
-        # 推送时间
-        time_row = tk.Frame(push_card, bg=COLORS["bg_card"])
-        time_row.pack(fill=tk.X, padx=10, pady=(2, 0))
-        tk.Label(time_row, text="推送时间",
-                 font=FONT_CAPTION, fg=COLORS["text_hint"],
-                 bg=COLORS["bg_card"]).pack(side=tk.LEFT)
-        self._push_time_label = tk.Label(time_row, text="每日 08:00",
-                                         font=FONT_CAPTION, fg=COLORS["text_body"],
-                                         bg=COLORS["bg_card"])
-        self._push_time_label.pack(side=tk.RIGHT)
-
-        # 累计推送
-        total_row = tk.Frame(push_card, bg=COLORS["bg_card"])
-        total_row.pack(fill=tk.X, padx=10, pady=(2, 8))
-        tk.Label(total_row, text="累计推送",
-                 font=FONT_CAPTION, fg=COLORS["text_hint"],
-                 bg=COLORS["bg_card"]).pack(side=tk.LEFT)
-        self._total_pushed_label = tk.Label(total_row, text="0 篇",
-                                            font=FONT_CAPTION, fg=COLORS["text_body"],
-                                            bg=COLORS["bg_card"])
-        self._total_pushed_label.pack(side=tk.RIGHT)
-
-        # 状态条（旧，保留供外部 set_push_status 使用）
-        self._push_status_label = tk.Label(push_card, text="",
-                                           font=FONT_CAPTION, fg=COLORS["text_secondary"],
-                                           bg=COLORS["bg_card"])
-        self._push_status_text = tk.Label(push_card, text="",
-                                          font=FONT_CAPTION, fg=COLORS["text_secondary"],
-                                          bg=COLORS["bg_card"])
+        self._task_count_label = tk.Label(summary_inner, text="0 个任务",
+                                          font=FONT_CAPTION,
+                                          fg=COLORS["text_secondary"],
+                                          bg=COLORS["sidebar_bg"])
+        self._task_count_label.pack(side=tk.LEFT)
+        self._task_count_label_extra = tk.Label(summary_inner, text="",
+                                                font=FONT_CAPTION,
+                                                fg=COLORS["text_hint"],
+                                                bg=COLORS["sidebar_bg"])
+        self._task_count_label_extra.pack(side=tk.RIGHT)
 
     # ═══ 对外接口 ═══
 
-    def set_push_stats(self, journal_count=0, total_pushed=0, push_time="每日 08:00"):
-        """更新推送信息卡统计数据"""
-        self._journal_count_label.configure(text=f"{journal_count} 个")
-        self._total_pushed_label.configure(text=f"{total_pushed} 篇")
-        self._push_time_label.configure(text=push_time)
-
-    def set_push_status(self, running, next_run_text=""):
-        self._push_running = running
-        if running:
-            self._push_status_label.configure(text="● 推送运行中", fg=COLORS["success"])
-            self._push_toggle_btn_2.configure(text="暂停", fg=COLORS["danger"])
-        else:
-            self._push_status_label.configure(text="○ 已暂停", fg=COLORS["text_secondary"])
-            self._push_toggle_btn_2.configure(text="启动", fg=COLORS["primary"])
+    def set_task_count(self, count, enabled_count=0):
+        """底部摘要显示任务数"""
+        self._task_count_label.configure(text=f"{count} 个任务")
+        self._task_count_label_extra.configure(text=f"{enabled_count} 启用")
 
     def set_task_running(self, task_id):
         """标记正在检索的任务，重绘卡片运行状态"""

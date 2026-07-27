@@ -619,7 +619,65 @@ class PaperMonitorApp:
         example_btn.grid(row=row+1, column=1, sticky=tk.W, pady=(6, 0))
         example_btn.bind("<Button-1>", lambda e: self._fill_example())
 
-        # ── 卡片 2: 邮箱配置 ──
+        # ── 卡片 2: 每日推送状态 ──
+        push_card = tk.Frame(scrollable, bg=COLORS["bg_card"],
+                             relief="solid", borderwidth=1)
+        push_card.pack(fill=tk.X, padx=2, pady=(0, 12))
+
+        tk.Label(push_card, text="📧 每日推送", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_card"]
+                 ).pack(anchor=tk.W, padx=16, pady=(14, 4))
+        tk.Frame(push_card, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
+
+        pf = tk.Frame(push_card, bg=COLORS["bg_card"])
+        pf.pack(fill=tk.X, padx=16, pady=(0, 14))
+
+        # 第一行：状态 + 开关
+        push_row1 = tk.Frame(pf, bg=COLORS["bg_card"])
+        push_row1.pack(fill=tk.X, pady=4)
+        self._push_status_indicator = tk.Label(push_row1, text="○",
+                                               font=FONT_BODY_BOLD,
+                                               fg=COLORS["dot_off"],
+                                               bg=COLORS["bg_card"])
+        self._push_status_indicator.pack(side=tk.LEFT, padx=(0, 6))
+        self._push_status_text = tk.Label(push_row1, text="每日推送未启动",
+                                          font=FONT_LABEL,
+                                          fg=COLORS["text_body"],
+                                          bg=COLORS["bg_card"])
+        self._push_status_text.pack(side=tk.LEFT)
+
+        self._push_toggle_btn = ttk.Button(push_row1, text="启动每日推送",
+                                           style="Primary.TButton",
+                                           command=self._toggle_scheduler)
+        self._push_toggle_btn.pack(side=tk.RIGHT)
+
+        # 第二行：监控统计
+        push_row2 = tk.Frame(pf, bg=COLORS["bg_card"])
+        push_row2.pack(fill=tk.X, pady=4)
+        stats_left = tk.Frame(push_row2, bg=COLORS["bg_card"])
+        stats_left.pack(side=tk.LEFT)
+        tk.Label(stats_left, text="监控期刊  ", font=FONT_CAPTION,
+                 fg=COLORS["text_hint"], bg=COLORS["bg_card"]).pack(side=tk.LEFT)
+        self._push_journal_label = tk.Label(stats_left, text="0 个",
+                                            font=FONT_BODY_BOLD,
+                                            fg=COLORS["primary"], bg=COLORS["bg_card"])
+        self._push_journal_label.pack(side=tk.LEFT, padx=(0, 16))
+
+        tk.Label(stats_left, text="推送时间  ", font=FONT_CAPTION,
+                 fg=COLORS["text_hint"], bg=COLORS["bg_card"]).pack(side=tk.LEFT)
+        self._push_time_label = tk.Label(stats_left, text="每日 08:00",
+                                         font=FONT_BODY_BOLD,
+                                         fg=COLORS["text_body"], bg=COLORS["bg_card"])
+        self._push_time_label.pack(side=tk.LEFT, padx=(0, 16))
+
+        tk.Label(stats_left, text="累计推送  ", font=FONT_CAPTION,
+                 fg=COLORS["text_hint"], bg=COLORS["bg_card"]).pack(side=tk.LEFT)
+        self._push_total_label = tk.Label(stats_left, text="0 篇",
+                                          font=FONT_BODY_BOLD,
+                                          fg=COLORS["success"], bg=COLORS["bg_card"])
+        self._push_total_label.pack(side=tk.LEFT)
+
+        # ── 卡片 3: 邮箱配置 ──
         monitor_card = tk.Frame(scrollable, bg=COLORS["bg_card"],
                                 relief="solid", borderwidth=1)
         monitor_card.pack(fill=tk.X, padx=2, pady=(0, 12))
@@ -1627,32 +1685,32 @@ class PaperMonitorApp:
             self._refresh_status_bar()
 
     def _update_daily_push_btn(self, running: bool):
-        """更新侧栏推送状态"""
+        """更新侧栏和右侧推送状态"""
         if running:
-            self.sidebar.set_push_status(True, "运行中")
+            self._push_status_indicator.configure(text="●", fg=COLORS["success"])
+            self._push_status_text.configure(text="每日推送运行中", fg=COLORS["success"])
+            self._push_toggle_btn.configure(text="暂停推送", style="Danger.TButton")
             # 刷新统计数据
             self._update_push_stats()
         else:
-            self.sidebar.set_push_status(False)
+            self._push_status_indicator.configure(text="○", fg=COLORS["dot_off"])
+            self._push_status_text.configure(text="每日推送未启动", fg=COLORS["text_body"])
+            self._push_toggle_btn.configure(text="启动每日推送", style="Primary.TButton")
 
     def _update_push_stats(self):
-        """从推送记录计算统计信息，更新侧栏推送卡"""
+        """从推送记录计算统计信息"""
         from core.config_manager import load_push_records
         records = load_push_records()
-        # 总推送论文数（去重后的 DOI 数）
         all_dois = set()
-        journal_count = 0
+        journal_set = set()
         for tid, dois in records.items():
             all_dois.update(dois)
             task = get_task(tid)
             if task:
-                journal_count += len(task.get("journals", []))
-        total_pushed = len(all_dois)
-        self.sidebar.set_push_stats(
-            journal_count=max(journal_count, len(self.sidebar._task_cards)),
-            total_pushed=total_pushed,
-            push_time="每日 08:00"
-        )
+                for j in task.get("journals", []):
+                    journal_set.add(j)
+        self._push_journal_label.configure(text=f"{len(journal_set)} 个")
+        self._push_total_label.configure(text=f"{len(all_dois)} 篇")
 
     def _require_activation(self, feature_name: str) -> bool:
         """检查是否已激活，未激活则弹出引导。返回是否已激活。"""
