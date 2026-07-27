@@ -399,7 +399,7 @@ class PaperMonitorApp:
         logo_label.pack(side=tk.LEFT)
 
         tk.Label(left_group,
-                 text="HONGXUN · 论文发现工具",
+                 text="HONGXUN",
                  font=FONT_TITLE,
                  fg=COLORS["text_title"],
                  bg=COLORS["bg_page"]).pack(side=tk.LEFT, padx=(12, 0))
@@ -512,25 +512,24 @@ class PaperMonitorApp:
         # 任务设置内容（原 scrollable 内的全部内容）
         # ========== 任务设置区 ==========
         # ── 卡片 1: 检索参数 ──
-        search_card = tk.Frame(scrollable, bg=COLORS["bg_page"],
-                               highlightbackground=COLORS["border_light"],
-                               highlightthickness=1)
+        search_card = tk.Frame(scrollable, bg=COLORS["bg_card"],
+                               relief="solid", borderwidth=1)
         search_card.pack(fill=tk.X, padx=2, pady=(0, 12))
 
         tk.Label(search_card, text="🔍 检索参数", font=FONT_HEADING,
-                 fg=COLORS["text_title"], bg=COLORS["bg_page"]
+                 fg=COLORS["text_title"], bg=COLORS["bg_card"]
                  ).pack(anchor=tk.W, padx=16, pady=(14, 4))
         tk.Frame(search_card, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
 
         # 表单区域用 grid
-        sf = tk.Frame(search_card, bg=COLORS["bg_page"])
+        sf = tk.Frame(search_card, bg=COLORS["bg_card"])
         sf.pack(fill=tk.X, padx=16, pady=(0, 14))
         sf.columnconfigure(1, weight=1)
 
         row = 0
         # 任务名称
         tk.Label(sf, text="任务名称", font=FONT_LABEL,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
         self.task_name_var = tk.StringVar()
         tk.Entry(sf, textvariable=self.task_name_var,
                  bd=1, relief="solid", highlightthickness=0,
@@ -618,40 +617,32 @@ class PaperMonitorApp:
         example_btn.grid(row=row+1, column=1, sticky=tk.W, pady=(6, 0))
         example_btn.bind("<Button-1>", lambda e: self._fill_example())
 
-        # ── 卡片 2: 自动监控 ──
-        monitor_card = tk.Frame(scrollable, bg=COLORS["bg_page"],
-                                highlightbackground=COLORS["border_light"],
-                                highlightthickness=1)
+        # ── 卡片 2: 邮箱配置 ──
+        monitor_card = tk.Frame(scrollable, bg=COLORS["bg_card"],
+                                relief="solid", borderwidth=1)
         monitor_card.pack(fill=tk.X, padx=2, pady=(0, 12))
 
-        tk.Label(monitor_card, text="📧 自动监控", font=FONT_HEADING,
-                 fg=COLORS["text_title"], bg=COLORS["bg_page"]
+        tk.Label(monitor_card, text="📧 邮箱配置", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_card"]
                  ).pack(anchor=tk.W, padx=16, pady=(14, 4))
         tk.Frame(monitor_card, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
 
-        mf = tk.Frame(monitor_card, bg=COLORS["bg_page"])
+        mf = tk.Frame(monitor_card, bg=COLORS["bg_card"])
         mf.pack(fill=tk.X, padx=16, pady=(0, 14))
         mf.columnconfigure(1, weight=1)
 
-        # 每日推送开关
-        tk.Label(mf, text="每日推送", font=FONT_LABEL,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=0, column=0, sticky=tk.W, padx=(0, 12), pady=8)
-        self._daily_push_btn = ttk.Button(mf, text=f" {ICONS['play']}  关闭", style="Secondary.TButton",
-                                          command=self._toggle_scheduler)
-        self._daily_push_btn.grid(row=0, column=1, sticky=tk.W, pady=8)
-
         # 收件邮箱
         tk.Label(mf, text="收件邮箱", font=FONT_LABEL,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=1, column=0, sticky=tk.NW, padx=(0, 12), pady=8)
-        receiver_container = tk.Frame(mf, bg=COLORS["bg_page"])
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=1, column=0, sticky=tk.NW, padx=(0, 12), pady=8)
+        receiver_container = tk.Frame(mf, bg=COLORS["bg_card"])
         receiver_container.grid(row=1, column=1, sticky=tk.EW, pady=8)
         receiver_container.columnconfigure(0, weight=1)
 
-        self._receiver_frame = tk.Frame(receiver_container, bg=COLORS["bg_page"])
+        self._receiver_frame = tk.Frame(receiver_container, bg=COLORS["bg_card"])
         self._receiver_frame.pack(fill=tk.X)
         self._receiver_list = []
 
-        receiver_add_frame = tk.Frame(receiver_container, bg=COLORS["bg_page"])
+        receiver_add_frame = tk.Frame(receiver_container, bg=COLORS["bg_card"])
         receiver_add_frame.pack(fill=tk.X, pady=(4, 0))
 
         self._new_receiver_var = tk.StringVar()
@@ -661,7 +652,7 @@ class PaperMonitorApp:
                                             insertbackground=COLORS["text_body"], font=FONT_BODY)
         self._new_receiver_entry.pack(side=tk.LEFT, padx=(0, 8))
         add_btn = tk.Label(receiver_add_frame, text="+ 添加",
-                           font=FONT_CAPTION, fg=COLORS["primary"], bg=COLORS["bg_page"], cursor="hand2")
+                           font=FONT_CAPTION, fg=COLORS["primary"], bg=COLORS["bg_card"], cursor="hand2")
         add_btn.pack(side=tk.LEFT)
         add_btn.bind("<Button-1>", lambda e: self._add_receiver())
         add_btn.bind("<Enter>", lambda e: add_btn.configure(fg=COLORS["primary_hover"]))
@@ -669,14 +660,14 @@ class PaperMonitorApp:
         self._new_receiver_entry.bind("<Return>", lambda e: self._add_receiver())
 
         # ── SMTP 配置（可折叠） ──
-        smtp_header = tk.Frame(mf, bg=COLORS["bg_page"])
+        smtp_header = tk.Frame(mf, bg=COLORS["bg_card"])
         smtp_header.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(8, 0))
         self._smtp_expanded = False
         smtp_toggle = tk.Label(smtp_header, text="▸ SMTP 配置",
                                font=FONT_CAPTION, fg=COLORS["primary"],
-                               bg=COLORS["bg_page"], cursor="hand2")
+                               bg=COLORS["bg_card"], cursor="hand2")
         smtp_toggle.pack(side=tk.LEFT)
-        self._smtp_config_frame = tk.Frame(mf, bg=COLORS["bg_page"])
+        self._smtp_config_frame = tk.Frame(mf, bg=COLORS["bg_card"])
 
         def _toggle_smtp():
             self._smtp_expanded = not self._smtp_expanded
@@ -696,21 +687,21 @@ class PaperMonitorApp:
 
         # 许可状态
         self._license_status_label = tk.Label(scf, text="", anchor=tk.W,
-                                              font=FONT_CAPTION, bg=COLORS["bg_page"])
+                                              font=FONT_CAPTION, bg=COLORS["bg_card"])
         self._license_status_label.grid(row=0, column=0, columnspan=4, sticky=tk.EW, pady=(0, 6))
 
         # 发件邮箱
         tk.Label(scf, text="发件邮箱", font=FONT_CAPTION,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=1, column=0, sticky=tk.W, padx=(0, 8), pady=4)
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=1, column=0, sticky=tk.W, padx=(0, 8), pady=4)
         self.sender_var = tk.StringVar()
         self.sender_entry = PlaceholderEntry(scf, placeholder="your_email@qq.com",
                                              textvariable=self.sender_var)
         self.sender_entry.grid(row=1, column=1, sticky=tk.EW, padx=(0, 12), pady=4)
 
         tk.Label(scf, text="SMTP授权码", font=FONT_CAPTION,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=1, column=2, sticky=tk.W, padx=(0, 8), pady=4)
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=1, column=2, sticky=tk.W, padx=(0, 8), pady=4)
         self.auth_code_var = tk.StringVar()
-        ac_frame = tk.Frame(scf, bg=COLORS["bg_page"])
+        ac_frame = tk.Frame(scf, bg=COLORS["bg_card"])
         ac_frame.grid(row=1, column=3, sticky=tk.EW, pady=4)
         ac_frame.columnconfigure(0, weight=1)
         self.auth_code_entry = PlaceholderEntry(ac_frame, placeholder="16位授权码", show="*",
@@ -719,13 +710,13 @@ class PaperMonitorApp:
         self._auth_code_visible = False
         toggle_auth = tk.Label(ac_frame, text="显示",
                                font=FONT_CAPTION, fg=COLORS["primary"],
-                               bg=COLORS["bg_page"], cursor="hand2", padx=6)
+                               bg=COLORS["bg_card"], cursor="hand2", padx=6)
         toggle_auth.grid(row=0, column=1)
         toggle_auth.bind("<Button-1>", lambda e: self._toggle_auth_code_visibility())
 
         # SMTP 服务器
         tk.Label(scf, text="SMTP服务", font=FONT_CAPTION,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=2, column=0, sticky=tk.W, padx=(0, 8), pady=4)
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=2, column=0, sticky=tk.W, padx=(0, 8), pady=4)
         self.smtp_preset_var = tk.StringVar(value="QQ邮箱")
         self.smtp_combo = ttk.Combobox(scf, textvariable=self.smtp_preset_var,
                                        state="readonly", width=28, font=FONT_BODY)
@@ -737,7 +728,7 @@ class PaperMonitorApp:
         self.port_var = tk.StringVar(value=configs[0]["port"] if configs else "465")
 
         # 操作按钮
-        btn_row_email = tk.Frame(scf, bg=COLORS["bg_page"])
+        btn_row_email = tk.Frame(scf, bg=COLORS["bg_card"])
         btn_row_email.grid(row=4, column=0, columnspan=4, sticky=tk.EW, pady=(8, 4))
         ttk.Button(btn_row_email, text="保存配置", style="Primary.TButton",
                    command=self._save_email_config).pack(side=tk.LEFT)
@@ -747,12 +738,12 @@ class PaperMonitorApp:
         self._resend_btn.state(["disabled"])
 
         # 使用指南 + 礼品券 链接
-        links_frame = tk.Frame(monitor_card, bg=COLORS["bg_page"])
+        links_frame = tk.Frame(monitor_card, bg=COLORS["bg_card"])
         links_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
         for text, cmd in [("📖 使用指南", self._show_email_intro),
                           ("🎟 礼品券", self._redeem_coupon_dialog)]:
             lb = tk.Label(links_frame, text=text, font=FONT_CAPTION,
-                          fg=COLORS["primary"], bg=COLORS["bg_page"], cursor="hand2")
+                          fg=COLORS["primary"], bg=COLORS["bg_card"], cursor="hand2")
             lb.pack(side=tk.LEFT, padx=(0, 16))
             lb.bind("<Button-1>", lambda e, c=cmd: c())
             lb.bind("<Enter>", lambda e, l=lb: l.configure(fg=COLORS["primary_hover"]))
@@ -850,17 +841,6 @@ class PaperMonitorApp:
                                         fg=COLORS["text_secondary"],
                                         bg=COLORS["sidebar_bg"])
         self._next_run_label.pack(side=tk.RIGHT, padx=(0, 16), pady=8)
-
-        # 代码锁按钮（状态栏右下）
-        self._code_lock_btn = tk.Label(inner_sf,
-                                       text=f"{ICONS['unlock']}",
-                                       font=FONT_CAPTION,
-                                       fg=COLORS["text_hint"], bg=COLORS["sidebar_bg"],
-                                       cursor="hand2")
-        self._code_lock_btn.pack(side=tk.RIGHT, padx=(0, 4), pady=8)
-        self._code_lock_btn.bind("<Button-1>", lambda e: self._verify_code_access())
-        self._code_locked = True
-        self._update_code_lock_ui()
 
         # 现在 pack idle 细线（在所有控件之后）
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)

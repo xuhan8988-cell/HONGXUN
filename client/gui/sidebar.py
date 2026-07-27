@@ -8,11 +8,11 @@ from gui.theme import COLORS, ICONS, FONT_BODY, FONT_BODY_BOLD, FONT_CAPTION, FO
 
 
 class TaskCard(tk.Frame):
-    """紧凑任务卡片（38px，点 + 名 + 状态标签，无 Canvas 边条）"""
+    """紧凑任务卡片（38px，点 + 名 + 状态标签 + 更多菜单）"""
 
     def __init__(self, master, task_id, task_name, enabled=True,
-                 selected=False, on_click=None,
-                 on_rename=None, on_context=None, **kwargs):
+                 selected=False, on_click=None, on_rename=None, on_context=None,
+                 on_search=None, on_delete=None, on_copy=None, **kwargs):
         self._task_id = task_id
         self._task_name = task_name
         self._enabled = enabled
@@ -20,6 +20,9 @@ class TaskCard(tk.Frame):
         self._on_click = on_click
         self._on_rename = on_rename
         self._on_context = on_context
+        self._on_search = on_search
+        self._on_delete = on_delete
+        self._on_copy = on_copy
 
         super().__init__(master, bg=COLORS["sidebar_bg"], cursor="hand2", **kwargs)
         self._build_card()
@@ -49,7 +52,7 @@ class TaskCard(tk.Frame):
                  fg=COLORS["text_title"] if self._enabled else COLORS["text_hint"],
                  bg=bg, anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # 状态标签（右）
+        # 状态标签 + 更多菜单（右）
         status_text = "运行中" if self._enabled else "禁用"
         status_color = COLORS["success"] if self._enabled else COLORS["text_hint"]
         tk.Label(row, text=status_text,
@@ -57,9 +60,38 @@ class TaskCard(tk.Frame):
                  fg=status_color,
                  bg=bg).pack(side=tk.RIGHT, padx=(4, 0))
 
+        # 「⋯」更多按钮
+        self._more_btn = tk.Label(row, text="⋯", font=FONT_CAPTION,
+                                  fg=COLORS["text_hint"], bg=bg, cursor="hand2",
+                                  padx=2)
+        self._more_btn.pack(side=tk.RIGHT, padx=(2, 0))
+        self._more_btn.bind("<Button-1>", self._show_more_menu)
+
         # 事件转发
         for w in [row] + row.winfo_children():
-            w.bind("<Button-1>", self._handle_click, add="+")
+            if w != self._more_btn:
+                w.bind("<Button-1>", self._handle_click, add="+")
+
+    def _show_more_menu(self, event):
+        """弹出快捷操作菜单"""
+        menu = tk.Menu(self, tearoff=0, font=FONT_BODY,
+                       bg=COLORS["bg_card"], fg=COLORS["text_body"])
+        if self._enabled:
+            menu.add_command(label="🔍 执行检索",
+                             command=lambda: self._on_search(self._task_id) if self._on_search else None)
+        menu.add_command(label="📋 复制任务",
+                         command=lambda: self._on_copy(self._task_id) if self._on_copy else None)
+        menu.add_separator()
+        label = "⏸ 禁用任务" if self._enabled else "▶ 启用任务"
+        menu.add_command(label=label,
+                         command=lambda: self._on_context(self._task_id, event))
+        menu.add_separator()
+        menu.add_command(label="🗑 删除任务", foreground=COLORS["danger"],
+                         command=lambda: self._on_delete(self._task_id) if self._on_delete else None)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def set_selected(self, selected):
         """重绘卡片——选中时加蓝色边条"""
@@ -230,6 +262,9 @@ class TaskSidebar(ttk.Frame):
                 on_click=self._on_card_click,
                 on_rename=self._on_card_rename,
                 on_context=self._on_card_context,
+                on_search=self._on_card_search,
+                on_delete=self._on_card_delete,
+                on_copy=self._on_card_copy,
             )
             card.pack(fill=tk.X, pady=(0, 1))
             self._task_cards[tid] = card
@@ -242,6 +277,27 @@ class TaskSidebar(ttk.Frame):
 
     def get_selected_task_id(self):
         return self._selected_task_id
+
+    # ═══ 更多菜单回调 ═══
+
+    def _on_card_search(self, task_id):
+        """外部通过 set_search_callback 设置"""
+        if self._on_select:
+            self._on_select(task_id)
+
+    def _on_card_delete(self, task_id):
+        if self._on_select:
+            self._on_select(task_id)
+
+    def _on_card_copy(self, task_id):
+        task = self._get_task(task_id)
+        if not task:
+            return
+        import uuid
+        new_id = str(uuid.uuid4())[:8]
+        new_task = dict(task, name=task["name"] + " (副本)")
+        self._save_task(new_id, new_task)
+        self.refresh_tasks()
 
     # ═══ 内部事件 ═══
 
