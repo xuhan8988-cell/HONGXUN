@@ -352,7 +352,7 @@ class PaperMonitorApp:
     def _scale_layout(self, scale):
         """根据缩放系数调整布局间距和面板宽度"""
         if hasattr(self, 'left_frame') and self.left_frame.winfo_exists():
-            new_width = max(200, min(440, int(240 * min(scale, 1.85))))
+            new_width = max(120, min(280, int(120 * min(scale, 1.85))))
             self.left_frame.configure(width=new_width)
             try:
                 self.paned.paneconfigure(self.left_frame, width=new_width)
