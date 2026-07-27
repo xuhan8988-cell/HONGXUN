@@ -354,15 +354,15 @@ class PaperMonitorApp:
         if hasattr(self, 'left_frame') and self.left_frame.winfo_exists():
             new_width = max(120, min(280, int(120 * min(scale, 1.85))))
             self.left_frame.configure(width=new_width)
-            try:
-                self.paned.paneconfigure(self.left_frame, width=new_width)
-            except Exception:
-                pass
         # 调整主内容区边距
         if hasattr(self, 'content_frame') and self.content_frame.winfo_exists():
             pad = max(8, min(40, int(24 * min(scale, 1.15))))
             pady = max(8, min(36, int(20 * min(scale, 1.15))))
-            self.content_frame.pack_configure(padx=pad, pady=pady)
+            if hasattr(self, 'notebook') and self.notebook.winfo_exists():
+                try:
+                    self.notebook.master.pack_configure(padx=pad, pady=pady)
+                except Exception:
+                    pass
 
     def _bind_safe(self, widget, sequence, callback):
         """安全绑定事件，避免重复绑定导致卡顿"""
@@ -424,17 +424,12 @@ class PaperMonitorApp:
 
         # ========== 主内容区 ==========
         self.content_frame = ttk.Frame(self.root, style="TFrame")
-        self.content_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+        self.content_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
 
-        self.paned = ttk.PanedWindow(self.content_frame, orient=tk.HORIZONTAL)
-        self.paned.pack(fill=tk.BOTH, expand=True)
-
-        # -------- 左侧任务面板 (TaskSidebar) --------
-        self.left_frame = tk.Frame(self.paned, bg="#FF0000", width=120)
-        self.paned.add(self.left_frame, weight=0)
-        # 调试：强制再次设置宽度
-        self.left_frame.after(500, lambda: self.left_frame.configure(width=120))
-        self.left_frame.after(1000, lambda: print(f"[DEBUG] left_frame width after 1s: {self.left_frame.winfo_width()}"))
+        # -------- 左侧任务面板 (TaskSidebar) — 固定宽度 pack --------
+        self.left_frame = tk.Frame(self.content_frame, bg="#FF0000", width=120)
+        self.left_frame.pack(side=tk.LEFT, fill=tk.Y)
+        self.left_frame.pack_propagate(False)
 
         self.sidebar = TaskSidebar(
             self.left_frame,
@@ -448,8 +443,8 @@ class PaperMonitorApp:
         self.sidebar.pack(fill=tk.BOTH, expand=True)
 
         # -------- 右侧内容区（ttk.Notebook 双标签） --------
-        right_frame = ttk.Frame(self.paned, style="TFrame")
-        self.paned.add(right_frame, weight=1)
+        right_frame = ttk.Frame(self.content_frame, style="TFrame")
+        right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=16, pady=16)
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(0, weight=1)
 
