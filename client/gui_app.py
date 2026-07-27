@@ -908,6 +908,10 @@ class PaperMonitorApp:
     def _refresh_task_list(self):
         if hasattr(self, 'sidebar'):
             self.sidebar.refresh_tasks()
+            # 同步更新侧栏底部任务计数
+            tasks = load_all_tasks()
+            enabled_count = sum(1 for t in tasks.values() if t.get("enabled", True))
+            self.sidebar.set_task_count(len(tasks), enabled_count)
 
     def _on_sidebar_select(self, task_id):
         """Sidebar 选中任务时的回调"""
