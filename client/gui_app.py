@@ -1627,21 +1627,32 @@ class PaperMonitorApp:
             self._refresh_status_bar()
 
     def _update_daily_push_btn(self, running: bool):
-        """更新每日推送按钮状态（toggle样式）"""
-        if hasattr(self, '_daily_push_btn') and self._daily_push_btn.winfo_exists():
-            if running:
-                self._daily_push_btn.configure(
-                    text=f" {ICONS['pause']}  每日推送(开)",
-                    style="Primary.TButton")
-            else:
-                self._daily_push_btn.configure(
-                    text=f" {ICONS['play']}  每日推送(关)",
-                    style="Secondary.TButton")
-        # 同时更新侧栏推送状态
+        """更新侧栏推送状态"""
         if running:
             self.sidebar.set_push_status(True, "运行中")
+            # 刷新统计数据
+            self._update_push_stats()
         else:
             self.sidebar.set_push_status(False)
+
+    def _update_push_stats(self):
+        """从推送记录计算统计信息，更新侧栏推送卡"""
+        from core.config_manager import load_push_records
+        records = load_push_records()
+        # 总推送论文数（去重后的 DOI 数）
+        all_dois = set()
+        journal_count = 0
+        for tid, dois in records.items():
+            all_dois.update(dois)
+            task = get_task(tid)
+            if task:
+                journal_count += len(task.get("journals", []))
+        total_pushed = len(all_dois)
+        self.sidebar.set_push_stats(
+            journal_count=max(journal_count, len(self.sidebar._task_cards)),
+            total_pushed=total_pushed,
+            push_time="每日 08:00"
+        )
 
     def _require_activation(self, feature_name: str) -> bool:
         """检查是否已激活，未激活则弹出引导。返回是否已激活。"""
