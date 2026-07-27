@@ -430,10 +430,8 @@ class PaperMonitorApp:
         self.paned.pack(fill=tk.BOTH, expand=True)
 
         # -------- 左侧任务面板 (TaskSidebar) --------
-        self.left_frame = tk.Frame(self.paned, bg=COLORS["sidebar_bg"], width=140)
+        self.left_frame = tk.Frame(self.paned, bg=COLORS["sidebar_bg"], width=120)
         self.paned.add(self.left_frame, weight=0)
-        # 与内容区分割线
-        tk.Frame(self.left_frame, bg=COLORS["border"], width=1).pack(side=tk.RIGHT, fill=tk.Y)
 
         self.sidebar = TaskSidebar(
             self.left_frame,

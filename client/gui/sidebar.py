@@ -179,31 +179,25 @@ class TaskSidebar(ttk.Frame):
             self._canvas.itemconfig(self._canvas_window, width=max(event.width, 120))
         self._canvas.bind("<Configure>", _configure_width)
 
-        # ═══ 底部：任务状态摘要（浓缩，不重复推送详情） ═══
+        # ═══ 底部：任务计数 ═══
         summary_bar = tk.Frame(self, bg=COLORS["sidebar_bg"])
         summary_bar.pack(fill=tk.X, side=tk.BOTTOM)
-        tk.Frame(summary_bar, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=10)
+        tk.Frame(summary_bar, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=8)
 
         summary_inner = tk.Frame(summary_bar, bg=COLORS["sidebar_bg"])
-        summary_inner.pack(fill=tk.X, padx=10, pady=6)
+        summary_inner.pack(fill=tk.X, padx=8, pady=4)
 
         self._task_count_label = tk.Label(summary_inner, text="0 个任务",
                                           font=FONT_CAPTION,
                                           fg=COLORS["text_secondary"],
                                           bg=COLORS["sidebar_bg"])
         self._task_count_label.pack(side=tk.LEFT)
-        self._task_count_label_extra = tk.Label(summary_inner, text="",
-                                                font=FONT_CAPTION,
-                                                fg=COLORS["text_hint"],
-                                                bg=COLORS["sidebar_bg"])
-        self._task_count_label_extra.pack(side=tk.RIGHT)
 
     # ═══ 对外接口 ═══
 
     def set_task_count(self, count, enabled_count=0):
         """底部摘要显示任务数"""
         self._task_count_label.configure(text=f"{count} 个任务")
-        self._task_count_label_extra.configure(text=f"{enabled_count} 启用")
 
     def set_task_running(self, task_id):
         """标记正在检索的任务，重绘卡片运行状态"""
