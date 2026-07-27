@@ -432,6 +432,8 @@ class PaperMonitorApp:
         # -------- 左侧任务面板 (TaskSidebar) --------
         self.left_frame = tk.Frame(self.paned, bg=COLORS["sidebar_bg"], width=200)
         self.paned.add(self.left_frame, weight=0)
+        # 与内容区分割线
+        tk.Frame(self.left_frame, bg=COLORS["border"], width=1).pack(side=tk.RIGHT, fill=tk.Y)
 
         self.sidebar = TaskSidebar(
             self.left_frame,
@@ -453,19 +455,19 @@ class PaperMonitorApp:
         self.notebook = ttk.Notebook(right_frame)
         self.notebook.grid(row=0, column=0, sticky=tk.NSEW)
 
-        # Notebook 标签样式
+        # Notebook 标签样式（VS Code 风格底部下划线）
         style = ttk.Style()
         style.configure("TNotebook", background=COLORS["bg_page"], borderwidth=0)
         style.configure("TNotebook.Tab",
-                        background=COLORS["sidebar_bg"],
+                        background=COLORS["bg_page"],
                         foreground=COLORS["text_secondary"],
-                        padding=[24, 8, 24, 8],
+                        padding=[20, 6, 20, 6],
                         borderwidth=0,
                         focusthickness=0,
                         font=FONT_BODY_BOLD)
         style.map("TNotebook.Tab",
-                  background=[("selected", COLORS["primary_light"])],
-                  foreground=[("selected", COLORS["primary_active"])])
+                  background=[("selected", COLORS["bg_page"])],
+                  foreground=[("selected", COLORS["primary"])])
 
         # ========== Tab 1: 任务设置（可滚动） ==========
         self._task_tab = ttk.Frame(self.notebook, style="TFrame")
