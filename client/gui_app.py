@@ -432,6 +432,8 @@ class PaperMonitorApp:
         # -------- 左侧任务面板 (TaskSidebar) --------
         self.left_frame = tk.Frame(self.paned, bg=COLORS["sidebar_bg"], width=120)
         self.paned.add(self.left_frame, weight=0)
+        # 调试：强制再次设置宽度
+        self.left_frame.after(500, lambda: self.left_frame.configure(width=120))
 
         self.sidebar = TaskSidebar(
             self.left_frame,
@@ -912,6 +914,8 @@ class PaperMonitorApp:
             tasks = load_all_tasks()
             enabled_count = sum(1 for t in tasks.values() if t.get("enabled", True))
             self.sidebar.set_task_count(len(tasks), enabled_count)
+            # 调试：打印 task_count
+            print(f"[DEBUG] set_task_count({len(tasks)}, {enabled_count})")
 
     def _on_sidebar_select(self, task_id):
         """Sidebar 选中任务时的回调"""
