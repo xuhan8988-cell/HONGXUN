@@ -430,10 +430,11 @@ class PaperMonitorApp:
         self.paned.pack(fill=tk.BOTH, expand=True)
 
         # -------- 左侧任务面板 (TaskSidebar) --------
-        self.left_frame = tk.Frame(self.paned, bg=COLORS["sidebar_bg"], width=120)
+        self.left_frame = tk.Frame(self.paned, bg="#FF0000", width=120)
         self.paned.add(self.left_frame, weight=0)
         # 调试：强制再次设置宽度
         self.left_frame.after(500, lambda: self.left_frame.configure(width=120))
+        self.left_frame.after(1000, lambda: print(f"[DEBUG] left_frame width after 1s: {self.left_frame.winfo_width()}"))
 
         self.sidebar = TaskSidebar(
             self.left_frame,
