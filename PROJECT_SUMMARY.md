@@ -4,7 +4,7 @@
 
 面向科研人员的学术论文监控工具，支持 CrossRef 检索、六级摘要补全、邮件推送、macOS 开机自启、Windows 开机自启。
 
-- **版本**：1.3.0-ZZU
+- **版本**：1.3.1-ZZU
 - **技术栈**：Python 3.11 + tkinter/ttk
 - **入口**：`client/gui_app.py`
 - **支持平台**：macOS 10.15+ / Windows 10/11 64位
@@ -264,7 +264,14 @@ client/
 
 ## 版本历史
 
-### v1.3.0-ZZU（当前）
+### v1.3.1-ZZU（当前）
+
+**Bug 修复：**
+- **字体变量 None 传播**：`from gui.theme import FONT_BODY` 在模块加载时捕获 `None`，`init_fonts()` 只改 theme 模块内的值，其他模块的局部变量仍为 `None`。在 `init_fonts()` 末尾通过 `sys.modules` 推送到所有依赖模块修复。
+- **`_add_receiver_widget()` 方法丢失**：清理旧库代码时误删了收件邮箱控件创建方法，导致 `_load_email_config()` 崩溃。从 git 历史恢复。
+- 应用启动无报错，所有功能可用。
+
+### v1.3.0-ZZU
 
 **GUI 架构重构：**
 - 将 4348 行 `gui_app.py` 拆分为 `gui/` 组件包（5 个模块，2072 行）
