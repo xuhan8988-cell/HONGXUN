@@ -408,12 +408,12 @@ class PaperMonitorApp:
         right_tool_group = tk.Frame(toolbar, bg=COLORS["bg_page"])
         right_tool_group.pack(side=tk.RIGHT, padx=(0, 8))
 
-        for icon_char, tip, cmd in [
-            ("⬇", "检查更新", self._check_update_manual),
-            ("?", "使用说明", self._show_usage_guide),
-            ("✉", "意见反馈", self._open_feedback),
+        for icon_char, text, cmd in [
+            ("⬇", "更新", self._check_update_manual),
+            ("?", "说明", self._show_usage_guide),
+            ("✉", "反馈", self._open_feedback),
         ]:
-            btn = tk.Label(right_tool_group, text=icon_char,
+            btn = tk.Label(right_tool_group, text=f"{icon_char} {text}",
                            font=FONT_BODY, fg=COLORS["text_secondary"],
                            bg=COLORS["bg_page"], cursor="hand2",
                            padx=8, pady=2)
