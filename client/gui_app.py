@@ -49,6 +49,7 @@ from gui.theme import (
     FONT_CAPTION, FONT_MONO, FONT_LABEL,
     FONT_BASE_SIZE, FONT_TITLE_SIZE, FONT_MIN_SIZE, FONT_MAX_SIZE, LAYOUT_SCALE_CAP,
     init_fonts, update_font_scale, _apply_styles, lerp_color,
+    _ui_font_family, _ui_mono_family,
 )
 from core import (
     load_all_tasks, save_task, delete_task, get_task,
