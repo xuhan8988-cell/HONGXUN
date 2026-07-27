@@ -28,16 +28,17 @@ _GITEE_RELEASE_URL = f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REP
 _GITEE_TAGS_URL = f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/tags"
 _GITEE_TOKEN = "5a813021b459eb4bb2901b6a37162533"
 
-# 当前版本（与 gui_app.py 保持同步）
-CURRENT_VERSION = "1.0.0"
+# 当前版本（与 gui/theme.py 同步，由 init() 注入覆盖）
+CURRENT_VERSION = "0.0.0"
 
 # 更新状态标记文件（存放于 data 目录）
 _UPDATE_MARK_FILE = None  # 在 init 时根据 BASE_DIR 设定
 
 
-def init(base_dir: str):
+def init(base_dir: str, version: str = "0.0.0"):
     """初始化更新模块（需传入 BASE_DIR）"""
-    global _UPDATE_MARK_FILE
+    global _UPDATE_MARK_FILE, CURRENT_VERSION
+    CURRENT_VERSION = version
     data_dir = os.path.join(base_dir, "data")
     os.makedirs(data_dir, exist_ok=True)
     _UPDATE_MARK_FILE = os.path.join(data_dir, "update_marker.json")
@@ -99,12 +100,12 @@ def _get_asset_filename() -> str:
 def _load_update_marker() -> dict:
     """读取更新标记"""
     if not _UPDATE_MARK_FILE or not os.path.exists(_UPDATE_MARK_FILE):
-        return {"skip_version": "", "last_check": None}
+        return {"notified_versions": [], "last_check": None}
     try:
         with open(_UPDATE_MARK_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {"skip_version": "", "last_check": None}
+        return {"notified_versions": [], "last_check": None}
 
 
 def _save_update_marker(marker: dict):
@@ -118,6 +119,14 @@ def _save_update_marker(marker: dict):
         pass
 
 
+def _parse_version(v: str) -> tuple:
+    """安全拆分版本号用于比较"""
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except Exception:
+        return (0, 0, 0)
+
+
 def check_update(skip_notified: bool = False) -> Optional[dict]:
     """
     检查 Gitee 最新发布版本。
@@ -125,7 +134,8 @@ def check_update(skip_notified: bool = False) -> Optional[dict]:
     skip_notified=True 则跳过已通知过的版本。
     """
     marker = _load_update_marker()
-    if skip_notified and marker.get("skip_version") == CURRENT_VERSION:
+    notified_versions = marker.get("notified_versions", [])
+    if skip_notified and CURRENT_VERSION in notified_versions:
         return None
 
     try:
@@ -138,8 +148,14 @@ def check_update(skip_notified: bool = False) -> Optional[dict]:
 
         tag = data.get("tag_name", "")
         version = tag.lstrip("v") if tag else ""
-        if not version or version <= CURRENT_VERSION:
+        if not version:
             return None
+        if _parse_version(version) <= _parse_version(CURRENT_VERSION):
+            return None
+        if skip_notified and version in notified_versions:
+            return None
+
+        # 匹配当前平台的发布附件
 
         # 匹配当前平台的发布附件
         asset_filename = _get_asset_filename()
@@ -167,9 +183,12 @@ def check_update(skip_notified: bool = False) -> Optional[dict]:
 
 
 def skip_current_version():
-    """标记当前版本已通知过（用户选择跳过）"""
+    """标记当前版本已通知过（用户选择跳过），不再重复推送"""
     marker = _load_update_marker()
-    marker["skip_version"] = CURRENT_VERSION
+    notified = marker.get("notified_versions", [])
+    if CURRENT_VERSION not in notified:
+        notified.append(CURRENT_VERSION)
+    marker["notified_versions"] = notified
     _save_update_marker(marker)
 
 

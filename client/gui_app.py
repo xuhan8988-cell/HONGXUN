@@ -153,7 +153,7 @@ class PaperMonitorApp:
         # 初始化 auto_updater
         try:
             base_dir = coupon_manager.BASE_DIR
-            auto_updater.init(base_dir)
+            auto_updater.init(base_dir, APP_VERSION)
         except Exception:
             pass
 
@@ -3109,7 +3109,7 @@ A: 点击顶部工具栏的「意见反馈」按钮，
     # ===================== 自动更新 =====================
 
     def _check_update_auto(self):
-        """启动后静默检查更新，有新版则弹窗通知"""
+        """启动后静默检查更新，有新版则弹窗通知（每版本仅推送一次）"""
         try:
             info = auto_updater.check_update(skip_notified=True)
             if info:
@@ -3118,7 +3118,7 @@ A: 点击顶部工具栏的「意见反馈」按钮，
             pass
 
     def _check_update_manual(self):
-        """手动点击「检查更新」"""
+        """手动点击「检查更新」— 始终查询最新版"""
         try:
             info = auto_updater.check_update(skip_notified=False)
             if not info:
@@ -3129,20 +3129,78 @@ A: 点击顶部工具栏的「意见反馈」按钮，
             messagebox.showerror("检查更新失败", f"无法检查更新：{e}")
 
     def _show_update_dialog(self, info: dict):
-        """显示更新确认对话框"""
+        """显示更新确认对话框（带版本介绍）"""
         version = info.get("version", "")
         body = info.get("body", "暂无更新说明")
-        result = messagebox.askyesno(
-            "发现新版本",
-            f"发现新版本 v{version}\n\n"
-            f"更新内容：\n{body}\n\n"
-            f"是否立即下载更新？"
+
+        # 创建一个自定义对话框，显示更新内容和功能
+        dialog = tk.Toplevel(self.root)
+        dialog.title("发现新版本")
+        dialog.geometry("500x400")
+        dialog.minsize(420, 320)
+        dialog.transient(self.root)
+        dialog.configure(bg=COLORS["bg_page"])
+        try:
+            dialog.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        tk.Label(dialog, text=f"发现新版本 v{version}",
+                 font=FONT_TITLE, fg=COLORS["text_title"],
+                 bg=COLORS["bg_page"]).pack(pady=(16, 4))
+        tk.Label(dialog, text=f"当前版本 v{AUTO_UPDATER_VERSION}",
+                 font=FONT_CAPTION, fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_page"]).pack(pady=(0, 12))
+
+        # 更新内容
+        text = scrolledtext.ScrolledText(
+            dialog, width=54, height=12,
+            font=FONT_BODY,
+            bg=COLORS["bg_card"],
+            fg=COLORS["text_body"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+            padx=12, pady=12,
+            wrap=tk.WORD
         )
-        if result:
+        text.pack(padx=16, fill=tk.BOTH, expand=True)
+        text.insert("1.0", body)
+        text.configure(state=tk.DISABLED)
+
+        # 操作按钮
+        btn_frame = tk.Frame(dialog, bg=COLORS["bg_page"])
+        btn_frame.pack(pady=(12, 16))
+
+        result = [None]
+
+        def on_update():
+            result[0] = "update"
+            dialog.destroy()
+
+        def on_skip():
+            result[0] = "skip"
+            dialog.destroy()
+
+        tk.Button(btn_frame, text="立即更新",
+                  font=FONT_BODY, bg=COLORS["primary"], fg="white",
+                  relief="flat", padx=20, pady=4, cursor="hand2",
+                  command=on_update).pack(side=tk.LEFT, padx=6)
+        tk.Button(btn_frame, text="稍后提醒",
+                  font=FONT_BODY, bg=COLORS["bg_card"], fg=COLORS["text_body"],
+                  relief="flat", padx=20, pady=4, cursor="hand2",
+                  command=on_skip).pack(side=tk.LEFT, padx=6)
+
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+
+        if result[0] == "update":
             self._download_and_apply_update(info)
-        else:
+        elif result[0] == "skip":
             auto_updater.skip_current_version()
             messagebox.showinfo("已跳过", f"当前版本 v{AUTO_UPDATER_VERSION} 将继续使用")
+        # result[0] == None: 直接关闭窗口，不做任何标记
+        # 这样下次启动仍会提醒
 
     def _download_and_apply_update(self, info: dict):
         """下载并应用更新"""
