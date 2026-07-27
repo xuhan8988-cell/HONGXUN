@@ -176,7 +176,7 @@ class TaskSidebar(ttk.Frame):
         self._canvas_window = self._canvas.create_window((0, 0), window=self._inner, anchor=tk.NW)
 
         def _configure_width(event):
-            self._canvas.itemconfig(self._canvas_window, width=max(event.width, 180))
+            self._canvas.itemconfig(self._canvas_window, width=max(event.width, 120))
         self._canvas.bind("<Configure>", _configure_width)
 
         # ═══ 底部：任务状态摘要（浓缩，不重复推送详情） ═══
