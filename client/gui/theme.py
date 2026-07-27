@@ -57,6 +57,7 @@ def _ui_mono_family() -> str:
     return "Consolas" if sys.platform == "win32" else "Menlo"
 
 
+# 模块级字体变量声明（保持 None 初始值供 from-import 引用）
 FONT_BODY = None
 FONT_BODY_BOLD = None
 FONT_HEADING = None
@@ -64,8 +65,8 @@ FONT_TITLE = None
 FONT_CAPTION = None
 FONT_MONO = None
 FONT_LABEL = None
-FONT_METRIC = None  # dashboard numbers
-FONT_DISPLAY = None  # large headings
+FONT_METRIC = None
+FONT_DISPLAY = None
 
 
 def init_fonts():
@@ -81,6 +82,17 @@ def init_fonts():
     FONT_METRIC = font.Font(family=_ff, size=min(32, FONT_TITLE_SIZE * 2))
     FONT_DISPLAY = font.Font(family=_ff, size=min(28, FONT_TITLE_SIZE + 8), weight="bold")
 
+    # 推送字体变量到所有依赖模块（from-import 在导入时拷贝 None）
+    import sys as _sys
+    _fnames = ('FONT_BODY', 'FONT_BODY_BOLD', 'FONT_HEADING', 'FONT_TITLE',
+               'FONT_CAPTION', 'FONT_MONO', 'FONT_LABEL', 'FONT_METRIC', 'FONT_DISPLAY')
+    _g = globals()
+    for _mn in ('gui.widgets', 'gui.sidebar', 'gui.library_view', '__main__'):
+        _m = _sys.modules.get(_mn)
+        if _m:
+            for _n in _fnames:
+                setattr(_m, _n, _g[_n])
+
 
 def update_font_scale(scale_factor):
     new_body = int(max(FONT_MIN_SIZE, min(FONT_MAX_SIZE, FONT_BASE_SIZE * scale_factor)))
@@ -93,6 +105,7 @@ def update_font_scale(scale_factor):
     FONT_TITLE.configure(size=new_title, weight="bold")
     FONT_CAPTION.configure(size=new_caption)
     FONT_MONO.configure(size=new_body)
+
 
 # ======================================================================
 # 颜色系统

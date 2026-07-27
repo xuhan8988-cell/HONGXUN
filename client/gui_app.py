@@ -2231,6 +2231,38 @@ class PaperMonitorApp:
         self._new_receiver_var.set("")
         self._new_receiver_entry.focus_set()
 
+    def _add_receiver_widget(self, email: str):
+        """创建单个收件邮箱行（输入框 + 删除按钮）"""
+        row_frame = tk.Frame(self._receiver_frame, bg=COLORS["bg_page"])
+        row_frame.pack(fill=tk.X, pady=2)
+
+        sv = tk.StringVar(value=email)
+        entry = tk.Entry(row_frame, textvariable=sv,
+                         bd=1, relief="solid", highlightthickness=0,
+                         bg=COLORS["bg_input"], fg=COLORS["text_body"],
+                         insertbackground=COLORS["text_body"],
+                         insertofftime=0,
+                         selectbackground=COLORS["primary_light"],
+                         selectforeground=COLORS["primary_active"],
+                         cursor="xterm",
+                         font=FONT_BODY)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+
+        idx = len(self._receiver_list)
+        remove_btn = tk.Label(row_frame, text=f"{ICONS['trash']}",
+                              font=FONT_CAPTION,
+                              fg=COLORS["danger"],
+                              bg=COLORS["bg_page"],
+                              cursor="hand2",
+                              padx=3)
+        remove_btn.pack(side=tk.RIGHT)
+        remove_btn.bind("<Button-1>", lambda e, i=idx: self._remove_receiver(i))
+        remove_btn.bind("<Enter>", lambda e, b=remove_btn: b.configure(fg=COLORS["danger"]))
+        remove_btn.bind("<Leave>", lambda e, b=remove_btn: b.configure(fg=COLORS["danger"]))
+
+        self._receiver_list.append((sv, entry, remove_btn))
+        self._refresh_remove_buttons()
+
     def _remove_receiver(self, index: int):
         if index < len(self._receiver_list):
             sv, entry, btn = self._receiver_list[index]
