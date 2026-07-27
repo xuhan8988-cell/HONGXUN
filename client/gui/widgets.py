@@ -292,7 +292,7 @@ class RoundedCard(tk.Frame):
     """Canvas 绘制圆角矩形 + 多层阴影的卡片容器"""
 
     def __init__(self, master, radius=10, bg_color="#FFFFFF", pad=14,
-                 hover_elevate=True, shadow=True, **kwargs):
+                 hover_elevate=False, shadow=True, **kwargs):
         # Pop 'bg' if passed in kwargs (duplicated by bg_color)
         kwargs.pop('bg', None)
         self._radius = radius
@@ -300,8 +300,8 @@ class RoundedCard(tk.Frame):
         self._pad = pad
         self._hover_elevate = hover_elevate
         self._shadow_enabled = shadow
-        self._shadow_offset_base = 3
-        self._shadow_offset = 3
+        self._shadow_offset_base = 2
+        self._shadow_offset = 2
 
         super().__init__(master, bg=COLORS["bg_page"], **kwargs)
         self._canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0,
@@ -349,23 +349,12 @@ class RoundedCard(tk.Frame):
         so = self._shadow_offset
 
         if self._shadow_enabled:
-            shadow_colors = self._compute_shadow_colors()
-            for i, sc in enumerate(shadow_colors):
-                offset = so - i
-                self._rounded_rect(offset, offset + 2, w - offset, h - offset + 2,
-                                   r + 2, fill=sc, outline="", tags="shadow")
+            # 单层阴影 + 1px 边框（替代原 3 层阴影）
+            self._rounded_rect(so, so + 1, w - so, h - so + 1,
+                               r + 1, fill="#E8E8ED", outline="", tags="shadow")
 
         self._rounded_rect(0, 0, w, h, r,
                            fill=self._bg_color, outline="", tags="bg")
-
-    def _compute_shadow_colors(self, bg_hex="#F5F5F7"):
-        bg_rgb = tuple(int(bg_hex[i:i + 2], 16) for i in (1, 3, 5))
-        layers = []
-        for i in range(3):
-            alpha = 0.08 * (1 - i * 0.3)
-            rgb = tuple(int(bg_rgb[c] * (1 - alpha)) for c in range(3))
-            layers.append(f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}")
-        return layers
 
     def _rounded_rect(self, x1, y1, x2, y2, r, **kwargs):
         pts = [
@@ -375,30 +364,6 @@ class RoundedCard(tk.Frame):
             x1, y2 - r, x1, y1 + r, x1, y1,
         ]
         return self._canvas.create_polygon(pts, smooth=True, **kwargs)
-
-    def _on_enter(self, event):
-        if not self._hover_elevate:
-            return
-        self._animate_shadow(3, 5, 6, 30)
-
-    def _on_leave(self, event):
-        if not self._hover_elevate:
-            return
-        self._animate_shadow(5, 3, 6, 30)
-
-    def _animate_shadow(self, start, end, steps, interval):
-        delta = (end - start) / steps
-
-        def _step(step=0):
-            if step >= steps:
-                self._shadow_offset = end
-                self._draw()
-                return
-            self._shadow_offset = start + delta * (step + 1)
-            self._draw()
-            self.after(interval, lambda: _step(step + 1))
-
-        _step()
 
 
 # ======================================================================

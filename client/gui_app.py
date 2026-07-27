@@ -36,7 +36,15 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 import re, textwrap, signal
+import logging
 import requests
+
+logger = logging.getLogger("HONGXUN")
+if not logger.handlers:
+    logger.setLevel(logging.WARNING)
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(_handler)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gui.theme import (
@@ -186,6 +194,7 @@ class PaperMonitorApp:
                 self.root.after(1200, self._check_resume_on_startup)
                 self.root.after(1500, self._check_scheduler_daemon_status)
                 self.root.after(1800, self._check_trial_status_at_startup)
+                self.root.after(2200, self._check_first_run_wizard)
                 self.root.after(5000, self._check_update_auto)
                 self.root.after(10000, self._poll_daemon_result)
             except Exception:
@@ -443,20 +452,19 @@ class PaperMonitorApp:
         self.paned.pack(fill=tk.BOTH, expand=True)
 
         # -------- 左侧任务面板 (TaskSidebar) --------
-        self.left_frame = tk.Frame(self.paned, bg=COLORS["sidebar_bg"], width=240)
+        self.left_frame = tk.Frame(self.paned, bg=COLORS["sidebar_bg"], width=200)
         self.paned.add(self.left_frame, weight=0)
 
         self.sidebar = TaskSidebar(
             self.left_frame,
             on_select=self._on_sidebar_select,
             on_new=self._new_task,
+            on_toggle_push=self._toggle_scheduler,
             load_tasks_fn=load_all_tasks,
             get_task_fn=get_task,
             save_task_fn=save_task,
         )
         self.sidebar.pack(fill=tk.BOTH, expand=True)
-
-        # 推送状态（sidebar 内置了推送状态卡片）
 
         # -------- 右侧内容区（ttk.Notebook 双标签） --------
         right_frame = ttk.Frame(self.paned, style="TFrame")
@@ -478,8 +486,8 @@ class PaperMonitorApp:
                         focusthickness=0,
                         font=FONT_BODY_BOLD)
         style.map("TNotebook.Tab",
-                  background=[("selected", COLORS["primary"])],
-                  foreground=[("selected", "#FFFFFF")])
+                  background=[("selected", COLORS["primary_light"])],
+                  foreground=[("selected", COLORS["primary_active"])])
 
         # ========== Tab 1: 任务设置（可滚动） ==========
         self._task_tab = ttk.Frame(self.notebook, style="TFrame")
@@ -991,7 +999,7 @@ class PaperMonitorApp:
             if hasattr(self, 'library_view'):
                 self.library_view.refresh()
 
-    # ===================== 检索执行 =====================
+    # ===================== 检索执行（一键检索） =====================
     def _run_history(self):
         if not self.current_task_id:
             messagebox.showwarning("提示", "请先保存任务后再执行检索")
@@ -1003,23 +1011,13 @@ class PaperMonitorApp:
             messagebox.showwarning("提示", "每日推送正在运行中，请先关闭后再执行历史检索")
             return
 
-        # 弹出文件保存对话框，让用户选择路径、名称和格式
-        from tkinter import filedialog
-        default_name = f"{get_task(self.current_task_id)['name']}_检索报告"
-        file_path = filedialog.asksaveasfilename(
-            parent=self.root,
-            title="保存检索报告",
-            initialfile=default_name,
-            defaultextension=".doc",
-            filetypes=[
-                ("Word 文档 (.doc)", "*.doc"),
-                ("Word 文档 (.docx)", "*.docx"),
-                ("纯文本文档 (.txt)", "*.txt"),
-                ("Markdown 文档 (.md)", "*.md"),
-            ]
-        )
-        if not file_path:
-            return  # 用户取消
+        # 一键检索：自动保存到 output 目录
+        task = get_task(self.current_task_id)
+        task_name = task["name"] if task else "unknown"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+        os.makedirs(output_dir, exist_ok=True)
+        file_path = os.path.join(output_dir, f"{task_name}_{timestamp}.doc")
 
         self._executing = True
         self._history_running = True
@@ -1045,18 +1043,16 @@ class PaperMonitorApp:
 
         def worker():
             try:
-                task = get_task(self.current_task_id)
                 result = run_history_search(self.current_task_id, task, file_path,
                                             progress_callback=_progress)
                 if isinstance(result, tuple):
                     fp, papers = result
                     # 自动入库到文献书架
-                    task_name = task.get("name", "")
                     from core.library import import_papers
                     count = import_papers(papers, task_name)
                     if count > 0:
                         self.root.after(0, lambda c=count: self.status_var.set(
-                            f"{ICONS['check']} 检索完成，{count} 篇新论文已收录到文献书架"))
+                            f"{ICONS['check']} 检索完成，{count} 篇新论文已收录"))
                     else:
                         self.root.after(0, lambda: self.status_var.set(
                             f"{ICONS['check']} 检索完成，未发现新论文（已在书架中）"))
@@ -1089,12 +1085,36 @@ class PaperMonitorApp:
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
         self._cancel_search_btn.pack_forget()
         self.status_var.set(f"{ICONS['check']} 检索完成")
-        # Toast 通知替代弹窗
-        self._show_toast(f"{ICONS['check']} 检索完成，结果已保存到文献书架",
-                         action_text="查看书架", action_cmd=self._switch_to_library)
+        # 自动切换到书架
+        self._switch_to_library()
+        # 原生通知
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["osascript", "-e",
+                    'display notification "检索完成，结果已保存到文献书架" with title "鸿讯 HONGXUN"'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
     def _show_toast(self, message, action_text=None, action_cmd=None, duration=3):
-        """右下角 toast 通知，滑入动画 + 自动消失"""
+        """系统通知（优先 macOS 原生通知，回退 Toplevel）"""
+        try:
+            if sys.platform == "darwin" and not action_text:
+                subprocess.Popen(["osascript", "-e",
+                    f'display notification "{message}" with title "鸿讯 HONGXUN"'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            elif sys.platform == "win32":
+                try:
+                    from plyer import notification
+                    notification.notify(title="鸿讯 HONGXUN", message=message, timeout=duration)
+                    return
+                except ImportError:
+                    pass
+        except Exception:
+            pass
+
+        # Fallback Toplevel toast
         toast = tk.Toplevel(self.root)
         toast.overrideredirect(True)
         toast.attributes("-topmost", True)
@@ -1634,7 +1654,7 @@ class PaperMonitorApp:
                 self._daily_push_btn.configure(
                     text=f" {ICONS['play']}  每日推送(关)",
                     style="Secondary.TButton")
-        # 同时更新侧栏底部推送状态
+        # 同时更新侧栏推送状态
         if running:
             self.sidebar.set_push_status(True, "运行中")
         else:
@@ -2972,6 +2992,78 @@ A: 点击顶部工具栏的「意见反馈」按钮，
                 )
             except Exception:
                 pass
+
+    def _check_first_run_wizard(self):
+        """首次运行向导：引导用户创建第一个任务"""
+        tasks_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "data", "tasks.json")
+        if os.path.exists(tasks_path):
+            try:
+                import json
+                with open(tasks_path, 'r') as f:
+                    tasks = json.load(f)
+                if tasks:
+                    return
+            except Exception:
+                pass
+
+        # 没有任务 — 弹出向导
+        welcome = tk.Toplevel(self.root)
+        welcome.title("首次使用向导")
+        welcome.geometry("480x360")
+        welcome.minsize(420, 320)
+        welcome.transient(self.root)
+        welcome.configure(bg=COLORS["bg_page"])
+        try:
+            welcome.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        tk.Label(welcome, text="欢迎使用鸿讯 HONGXUN",
+                 font=FONT_TITLE, fg=COLORS["text_title"],
+                 bg=COLORS["bg_page"]).pack(pady=(20, 6))
+        tk.Label(welcome, text="只需 3 步即可开始监控论文",
+                 font=FONT_BODY, fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_page"]).pack(pady=(0, 16))
+
+        steps_frame = tk.Frame(welcome, bg=COLORS["bg_page"])
+        steps_frame.pack(padx=30, fill=tk.X)
+
+        steps = [
+            ("1", "创建任务", "填写期刊名称和关键词，设置检索时间范围"),
+            ("2", "执行检索", "一键检索 CrossRef 数据库，论文自动入库"),
+            ("3", "浏览书架", "在三栏文献书架中阅读摘要、管理文献"),
+        ]
+        for num, title, desc in steps:
+            row = tk.Frame(steps_frame, bg=COLORS["bg_page"])
+            row.pack(fill=tk.X, pady=6)
+            num_label = tk.Label(row, text=num,
+                                 font=FONT_HEADING,
+                                 fg=COLORS["primary"], bg=COLORS["bg_page"],
+                                 width=2)
+            num_label.pack(side=tk.LEFT)
+            text_frame = tk.Frame(row, bg=COLORS["bg_page"])
+            text_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+            tk.Label(text_frame, text=title, font=FONT_BODY_BOLD,
+                     fg=COLORS["text_title"], bg=COLORS["bg_page"],
+                     anchor=tk.W).pack(fill=tk.X)
+            tk.Label(text_frame, text=desc, font=FONT_CAPTION,
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_page"],
+                     anchor=tk.W).pack(fill=tk.X)
+
+        btn_frame = tk.Frame(welcome, bg=COLORS["bg_page"])
+        btn_frame.pack(pady=(16, 0))
+        tk.Button(btn_frame, text="开始使用",
+                  font=FONT_BODY, bg=COLORS["primary"],
+                  fg="white", relief="flat", padx=24, pady=6,
+                  cursor="hand2",
+                  command=welcome.destroy).pack()
+
+        welcome.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 480) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 360) // 2
+        welcome.geometry(f"+{x}+{y}")
+        welcome.grab_set()
 
     # ===================== 自动更新 =====================
 

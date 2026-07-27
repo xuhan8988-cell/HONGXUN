@@ -28,8 +28,8 @@ ICON_DIR = os.path.join(LOGO_DIR, "icons")
 # ======================================================================
 # 全局字体系统
 # ======================================================================
-FONT_BASE_SIZE = 14
-FONT_TITLE_SIZE = 16
+FONT_BASE_SIZE = 13
+FONT_TITLE_SIZE = 15
 FONT_MIN_SIZE = 9
 FONT_MAX_SIZE = 19
 LAYOUT_SCALE_CAP = 1.35
@@ -40,17 +40,17 @@ def _ui_font_family() -> str:
 
 
 def _ui_font_base() -> int:
-    return 10 if sys.platform == "win32" else 14
+    return 9 if sys.platform == "win32" else 13
 
 
 def _ui_font_title() -> int:
-    return 12 if sys.platform == "win32" else 16
+    return 11 if sys.platform == "win32" else 15
 
 
 FONT_BASE_SIZE = _ui_font_base()
 FONT_TITLE_SIZE = _ui_font_title()
-FONT_MIN_SIZE = 9
-FONT_MAX_SIZE = 19
+FONT_MIN_SIZE = 8
+FONT_MAX_SIZE = 18
 
 
 def _ui_mono_family() -> str:
@@ -126,15 +126,15 @@ COLORS = {
     "danger_light": "#FEE2E2",
 
     # ── 背景色（暖白基调，更适合长时间阅读）──
-    "bg_page": "#F8F9FA",           # 暖白（原 #FFFFFF）
+    "bg_page": "#FFFFFF",           # 纯白（原暖白 #F8F9FA，与侧栏拉大对比）
     "bg_card": "#FFFFFF",           # 卡片保持纯白
-    "sidebar_bg": "#F1F3F5",        # 暖灰侧栏（原 #F5F5F7）
+    "sidebar_bg": "#EAECEF",        # 更深暖灰侧栏（原 #F1F3F5，与页面 bg 拉开对比）
     "bg_input": "#FFFFFF",
     "bg_input_focus": "#FFFFFF",
 
-    # ── 边框 ──
-    "border": "#D4D6D9",            # 暖灰边框（原 #D2D2D7）
-    "border_light": "#E5E7EB",      # 暖淡灰（原 #E8E8ED）
+    # ── 边框（更高对比度）──
+    "border": "#C8CCD0",            # 暖灰边框
+    "border_light": "#DEE0E3",      # 浅暖灰
     "input_border": "#D1D5DB",
 
     # ── 文字（更明显的对比度梯度）──

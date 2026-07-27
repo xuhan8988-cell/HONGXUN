@@ -4,7 +4,7 @@
 
 面向科研人员的学术论文监控工具，支持 CrossRef 检索、六级摘要补全、邮件推送、macOS 开机自启、Windows 开机自启。
 
-- **版本**：1.3.1-ZZU
+- **版本**：1.3.2-ZZU
 - **技术栈**：Python 3.11 + tkinter/ttk
 - **入口**：`client/gui_app.py`
 - **支持平台**：macOS 10.15+ / Windows 10/11 64位
@@ -128,7 +128,7 @@ client/
     └── library_view.py      # 三栏书架（替代 Treeview 单表）
 ```
 
-### 颜色体系（v1.3.0 暖色调）
+### 颜色体系（v1.3.2 优化版）
 
 | 角色 | 值 | 用途 |
 |------|------|------|
@@ -139,29 +139,29 @@ client/
 | **success** | `#16A34A` | 成功/运行中 |
 | **warning** | `#D97706` | 警告 |
 | **danger** | `#DC2626` | 错误/排除 |
-| **bg_page** | `#F8F9FA` | 暖白页面背景 |
+| **bg_page** | `#FFFFFF` | 纯白页面背景 |
 | **bg_card** | `#FFFFFF` | 卡片背景 |
-| **sidebar_bg** | `#F1F3F5` | 侧栏背景 |
+| **sidebar_bg** | `#EAECEF` | 侧栏背景（更深，与页面拉大对比） |
 | text_title | `#111827` | 标题（Gray-900） |
 | text_body | `#1F2937` | 正文（Gray-800） |
 | text_secondary | `#6B7280` | 次要文字（Gray-500） |
 | text_hint | `#9CA3AF` | 占位符（Gray-400） |
 
-### 字体系统
+### 字体系统（v1.3.2 调小）
 
 | 层级 | 字号（macOS） | 字重 | 用途 |
 |------|:-------------:|:----:|------|
 | FONT_METRIC | 32pt | Bold | 仪表盘数字 |
 | FONT_DISPLAY | 28pt | Bold | 大标题 |
-| FONT_TITLE | 16pt | Bold | 页面标题 |
-| FONT_HEADING | 14pt | Bold | 卡片标题 |
-| FONT_BODY | 14pt | Normal | 正文 |
-| FONT_LABEL | 14pt | Bold | 表单标签 |
-| FONT_CAPTION | 12pt | Normal | 辅助文字 |
-| FONT_MONO | 14pt | Normal | DOI/代码 |
+| FONT_TITLE | 15pt | Bold | 页面标题 |
+| FONT_HEADING | 13pt | Bold | 卡片标题 |
+| FONT_BODY | 13pt | Normal | 正文 |
+| FONT_LABEL | 13pt | Bold | 表单标签 |
+| FONT_CAPTION | 11pt | Normal | 辅助文字 |
+| FONT_MONO | 13pt | Normal | DOI/代码 |
 
-- 平台适配：Windows 基准字号 10pt，macOS 14pt
-- 响应式缩放：9~19pt 区间，上限 1.35x
+- 平台适配：Windows 基准字号 9pt，macOS 13pt
+- 响应式缩放：8~18pt 区间，上限 1.35x
 
 ### 布局架构
 
@@ -169,16 +169,16 @@ client/
 ┌─ toolbar (44px, bg=#FFFFFF) ───────────────────────────┐
 │  ⲎⲬ  HONGXUN · 论文发现工具          更新  说明  反馈   │
 ├────────────────────────────────────────────────────────┤
-│ ┌─sidebar(#F1F3F5)──┐ ┌─content──────────────────────┐│
+│ ┌─sidebar(#EAECEF)──┐ ┌─content──────────────────────┐│
 │ │ 📋 监控任务      [+]│ │ Notebook                    ││
 │ │ ┌────────────────┐ │ │ [📋任务设置][📚书架]        ││
-│ │ │ ▎ 任务1    ●运行│ │ │ ┌────────────────────────┐ ││
-│ │ │ ▎ 任务2    ○禁用│ │ │ │ 内容区                 │ ││
+│ │ │● 任务1         │ │ │ ┌────────────────────────┐ ││
+│ │ │● 任务2         │ │ │ │ 内容区                 │ ││
 │ │ └────────────────┘ │ │ └────────────────────────┘ ││
-│ │ ● 每日推送运行中    │ │                            ││
+│ │ ○ 推送未启动       │ │                            ││
 │ └────────────────────┘ └─────────────────────────────┘│
 ├─ progress (2px idle / 展开时活跃) ─────────────────────┤
-├─ status (38px, bg=#F1F3F5) ────────────────────────────┤
+├─ status (38px, bg=#EAECEF) ────────────────────────────┤
 │ ● 就绪    状态消息...       🔒 郑州大学 v1.0.0 ⏱下次8:00│
 └────────────────────────────────────────────────────────┘
 ```
@@ -208,7 +208,7 @@ client/
 
 | 控件 | 说明 | 技术 |
 |------|------|------|
-| **RoundedCard** | 圆角矩形 + 3 层阴影 + hover 抬升 | `tk.Canvas` + `create_polygon(smooth=True)` |
+| **RoundedCard** | 圆角矩形 + 单层阴影 + 1px 边框 | `tk.Canvas` + `create_polygon(smooth=True)` |
 | **ModernButton** | 圆角按钮，hover 颜色过渡，press 模拟 scale(0.97) | `tk.Canvas` |
 | **StatusPill** | 三色状态胶囊（待读/已读/排除） | `tk.Canvas` |
 | **StatusPill** | 图标+文字组合，支持 PNG/PIL/emoji 回退 | `tk.Frame` |
@@ -264,7 +264,22 @@ client/
 
 ## 版本历史
 
-### v1.3.1-ZZU（当前）
+### v1.3.2-ZZU（当前）
+
+**UI 体验优化：**
+- **侧栏紧凑化**：宽度 240px → 200px，任务卡片高度 56px → 44px，底色改为 `sidebar_bg`
+- **背景对比度提升**：页面背景 `#F8F9FA` → `#FFFFFF`（纯白），侧栏 `#F1F3F5` → `#EAECEF`（加深）
+- **边框加深**：`#E5E7EB` → `#DEE0E3`，`#D4D6D9` → `#C8CCD0`
+- **字体调小**：macOS 基准 14pt → 13pt，标题 16pt → 15pt；Windows 10pt → 9pt
+- **Notebook Tab 样式**：选中态从蓝底白字改为浅蓝底深蓝字（`#DBEAFE`/`#1D4ED8`）
+- **RoundedCard 阴影简化**：3 层阴影 → 单层阴影 + 1px 边框，hover 抬升动画移除
+- **一键检索**：自动保存到 `output/` 目录（不再弹出保存对话框），完成后自动切换到书架
+- **macOS 原生通知**：检索完成等场景使用系统通知替代自绘 Toast
+- **首次运行向导**：检测到无任务时弹出 3 步引导界面
+- **Logger 系统**：新增 `logging`，28 处 `except:pass` 替换为 `logger.warning(exc_info=True)`
+- **硬编码 SMTP 凭据集中管理**：反馈功能凭据移至模块顶部常量
+
+### v1.3.1-ZZU
 
 **Bug 修复：**
 - **字体变量 None 传播**：`from gui.theme import FONT_BODY` 在模块加载时捕获 `None`，`init_fonts()` 只改 theme 模块内的值，其他模块的局部变量仍为 `None`。在 `init_fonts()` 末尾通过 `sys.modules` 推送到所有依赖模块修复。
