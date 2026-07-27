@@ -208,8 +208,7 @@ class TaskSidebar(ttk.Frame):
         else:
             self._push_status_label.configure(text="○ 已暂停", fg=COLORS["text_secondary"])
             self._push_toggle_btn.configure(text="启动", fg=COLORS["primary"])
-        if next_run_text:
-            self._next_run_label.configure(text=f"下次：{next_run_text}")
+        self._next_run_label.configure(text=f"下次：{next_run_text}" if next_run_text else "下次：--")
 
     def set_next_run(self, next_run_str):
         self._next_run_label.configure(text=f"下次：{next_run_str}")

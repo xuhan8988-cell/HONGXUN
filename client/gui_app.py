@@ -404,45 +404,23 @@ class PaperMonitorApp:
                  fg=COLORS["text_title"],
                  bg=COLORS["bg_page"]).pack(side=tk.LEFT, padx=(12, 0))
 
-        # 顶部工具栏右侧
+        # 顶部工具栏右侧（图标按钮）
         right_tool_group = tk.Frame(toolbar, bg=COLORS["bg_page"])
-        right_tool_group.pack(side=tk.RIGHT, padx=(0, 12))
+        right_tool_group.pack(side=tk.RIGHT, padx=(0, 8))
 
-        self._update_btn = tk.Label(right_tool_group,
-                                     text=f"{ICONS['update']} 更新",
-                                     font=FONT_CAPTION,
-                                     fg=COLORS["primary"],
-                                     bg=COLORS["bg_page"],
-                                     cursor="hand2",
-                                     padx=10, pady=2)
-        self._update_btn.pack(side=tk.RIGHT, padx=(4, 0))
-        self._update_btn.bind("<Button-1>", lambda e: self._check_update_manual())
-        self._update_btn.bind("<Enter>", lambda e: self._update_btn.configure(fg=COLORS["primary_hover"]))
-        self._update_btn.bind("<Leave>", lambda e: self._update_btn.configure(fg=COLORS["primary"]))
-
-        help_btn = tk.Label(right_tool_group,
-                            text="说明",
-                            font=FONT_CAPTION,
-                            fg=COLORS["primary"],
-                            bg=COLORS["bg_page"],
-                            cursor="hand2",
-                            padx=10, pady=2)
-        help_btn.pack(side=tk.RIGHT, padx=(4, 0))
-        help_btn.bind("<Button-1>", lambda e: self._show_usage_guide())
-        help_btn.bind("<Enter>", lambda e: help_btn.configure(fg=COLORS["primary_hover"]))
-        help_btn.bind("<Leave>", lambda e: help_btn.configure(fg=COLORS["primary"]))
-
-        fb_btn = tk.Label(right_tool_group,
-                          text="反馈",
-                          font=FONT_CAPTION,
-                          fg=COLORS["primary"],
-                          bg=COLORS["bg_page"],
-                          cursor="hand2",
-                          padx=10, pady=2)
-        fb_btn.pack(side=tk.RIGHT, padx=(4, 0))
-        fb_btn.bind("<Button-1>", lambda e: self._open_feedback())
-        fb_btn.bind("<Enter>", lambda e: fb_btn.configure(fg=COLORS["primary_hover"]))
-        fb_btn.bind("<Leave>", lambda e: fb_btn.configure(fg=COLORS["primary"]))
+        for icon_char, tip, cmd in [
+            ("⬇", "检查更新", self._check_update_manual),
+            ("?", "使用说明", self._show_usage_guide),
+            ("✉", "意见反馈", self._open_feedback),
+        ]:
+            btn = tk.Label(right_tool_group, text=icon_char,
+                           font=FONT_BODY, fg=COLORS["text_secondary"],
+                           bg=COLORS["bg_page"], cursor="hand2",
+                           padx=8, pady=2)
+            btn.pack(side=tk.RIGHT, padx=(2, 0))
+            btn.bind("<Button-1>", lambda e, c=cmd: c())
+            btn.bind("<Enter>", lambda e, b=btn: b.configure(fg=COLORS["primary"]))
+            btn.bind("<Leave>", lambda e, b=btn: b.configure(fg=COLORS["text_secondary"]))
 
         # ========== 主内容区 ==========
         self.content_frame = ttk.Frame(self.root, style="TFrame")
@@ -630,8 +608,15 @@ class PaperMonitorApp:
                    command=self._run_history).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_frame, text=f" {ICONS['save']}  保存任务", style="Secondary.TButton",
                    command=self._save_task).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text="↻ 重置", style="Secondary.TButton",
-                   command=self._cancel_edit).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_frame, text="🗑 删除", style="Danger.TButton",
+                   command=self._delete_task).pack(side=tk.LEFT, padx=4)
+
+        # 示例填充
+        example_btn = tk.Label(sf, text="🌰 试试示例", font=FONT_CAPTION,
+                               fg=COLORS["primary"], bg=COLORS["bg_page"],
+                               cursor="hand2")
+        example_btn.grid(row=row+1, column=1, sticky=tk.W, pady=(6, 0))
+        example_btn.bind("<Button-1>", lambda e: self._fill_example())
 
         # ── 卡片 2: 自动监控 ──
         monitor_card = tk.Frame(scrollable, bg=COLORS["bg_page"],
@@ -976,6 +961,18 @@ class PaperMonitorApp:
     def _cancel_edit(self):
         self._new_task()
 
+    def _fill_example(self):
+        """快速填入示例数据，让新用户一键跑通"""
+        self.task_name_var.set("AI 顶刊监控")
+        self.journal_var.set("Nature;Science;Cell")
+        self.keyword_var.set("artificial intelligence;machine learning;deep learning")
+        self.date_start_var.set("2025-01-01")
+        self.date_end_var.set("2026-07-26")
+        self.status_var.set("示例已填充，点击「保存任务」→「执行检索」开始使用")
+        # 如果当前没有任务，自动新建
+        if not self.current_task_id:
+            self._save_task()
+
     def _is_activated_cached(self) -> bool:
         """会话级激活缓存：先查 14 天试用，再查礼品券"""
         if self._activation_cache is None:
@@ -1085,13 +1082,12 @@ class PaperMonitorApp:
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
         self._cancel_search_btn.pack_forget()
         self.status_var.set(f"{ICONS['check']} 检索完成")
-        # 自动切换到书架
-        self._switch_to_library()
-        # 原生通知
+        # 不自动切换书架，只在任务设置页底部显示提示
+        # (用户可通过侧栏快捷操作或 Tab 自行切换)
         try:
             if sys.platform == "darwin":
                 subprocess.Popen(["osascript", "-e",
-                    'display notification "检索完成，结果已保存到文献书架" with title "鸿讯 HONGXUN"'],
+                    'display notification "检索完成" with title "鸿讯 HONGXUN"'],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
