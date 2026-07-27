@@ -427,7 +427,7 @@ class PaperMonitorApp:
         self.content_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
 
         # -------- 左侧任务面板 (TaskSidebar) — 固定宽度 pack --------
-        self.left_frame = tk.Frame(self.content_frame, bg="#FF0000", width=120)
+        self.left_frame = tk.Frame(self.content_frame, bg=COLORS["sidebar_bg"], width=120)
         self.left_frame.pack(side=tk.LEFT, fill=tk.Y)
         self.left_frame.pack_propagate(False)
 
