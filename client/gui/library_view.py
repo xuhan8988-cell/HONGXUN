@@ -17,8 +17,9 @@ from core.library import (
 )
 
 STATUS_MAP = {"全部": None, "待读": "pending", "已读": "read", "排除": "excluded"}
-STATUS_ICON = {"pending": "○", "read": "●", "excluded": "✕"}
-STATUS_COLORS = {"pending": COLORS["warning"], "read": COLORS["success"], "excluded": COLORS["danger"]}
+STATUS_ICON = {"pending": "●", "read": "●", "excluded": "✕"}
+STATUS_COLORS = {"pending": COLORS["text_hint"], "read": COLORS["success"], "excluded": COLORS["danger"]}
+STATUS_LABELS = {"pending": "待读", "read": "已读", "excluded": "排除"}
 
 class QuickLookPanel(tk.Frame):
     """中栏详情预览"""
@@ -430,8 +431,21 @@ class LibraryView(ttk.Frame):
                 papers.append(p)
         return papers
 
+    def _mark_paper(self, p, new_status, iid=None):
+        """更新论文状态并刷新 Treeview 行显示。"""
+        update_paper_status(p["id"], new_status)
+        p["status"] = new_status
+        icon = STATUS_ICON.get(new_status, "●")
+        if iid:
+            vals = list(self._tree.item(iid, "values"))
+            vals[0] = icon
+            self._tree.item(iid, values=vals)
+        stats = get_stats()
+        self._main_stats_var.set(
+            f"总计: {stats['total']}  待读: {stats['pending']}  已读: {stats['read']}  排除: {stats['excluded']}")
+
     def _on_tree_select(self, event):
-        """单击选择条目，更新元数据。如果 QuickLook 已展开则不重复插入。"""
+        """单击——自动标记已读，更新元数据。"""
         sel = self._tree.selection()
         if not sel:
             self._meta_card.clear()
@@ -440,8 +454,10 @@ class LibraryView(ttk.Frame):
         p = self._paper_map.get(iid)
         if not p:
             return
+        # 自动标记为已读
+        if p.get("status") != "read":
+            self._mark_paper(p, "read", iid=iid)
         self._meta_card.show(p)
-        # 如果 QuickLook 已展开则同步更新内容（不反复 insert/forget）
         if self._ql_panel._visible:
             idx = next((i for i, pp in enumerate(self._papers) if pp.get("id") == p.get("id")), 0)
             self._ql_panel.show(p, self._papers, idx)
@@ -451,7 +467,7 @@ class LibraryView(ttk.Frame):
     def _on_tree_click_column(self, event):
         """点击状态列循环切换阅读状态。"""
         col = self._tree.identify_column(event.x)
-        if col == "#1":  # 状态列
+        if col == "#1":
             iid = self._tree.identify_row(event.y)
             if not iid:
                 return
@@ -460,17 +476,7 @@ class LibraryView(ttk.Frame):
                 cur = p.get("status", "pending")
                 nxt = {"pending": "read", "read": "excluded", "excluded": "pending"}
                 new_status = nxt.get(cur, "pending")
-                update_paper_status(p["id"], new_status)
-                p["status"] = new_status
-                # 更新状态图标
-                icon = STATUS_ICON.get(new_status, "○")
-                values = list(self._tree.item(iid, "values"))
-                values[0] = icon
-                self._tree.item(iid, values=values)
-                # 刷新统计
-                stats = get_stats()
-                self._main_stats_var.set(
-                    f"总计: {stats['total']}  待读: {stats['pending']}  已读: {stats['read']}  排除: {stats['excluded']}")
+                self._mark_paper(p, new_status, iid=iid)
 
     def _on_tree_double(self, event):
         sel = self._tree.selection()
@@ -480,6 +486,9 @@ class LibraryView(ttk.Frame):
         p = self._paper_map.get(iid)
         if not p:
             return
+        # 双击也自动标记为已读
+        if p.get("status") != "read":
+            self._mark_paper(p, "read", iid=iid)
         self._show_paper_popup(p)
 
     def _show_paper_popup(self, paper):
