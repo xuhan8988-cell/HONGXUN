@@ -11,7 +11,7 @@ from tkinter import font, ttk
 # 版本标识（暂存于此供 gui_app 导入）
 # ======================================================================
 APP_NAME = "鸿讯 HONGXUN（郑州大学定制版）"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 AUTO_UPDATER_VERSION = APP_VERSION
 
 # ======================================================================
