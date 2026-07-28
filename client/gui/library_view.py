@@ -158,12 +158,12 @@ class MetadataCard(RoundedCard):
     """右侧元数据卡片"""
 
     def __init__(self, master, **kwargs):
-        super().__init__(master, bg_color=COLORS["bg_card"], pad=12, hover_elevate=False, shadow=False, scrollable=True, **kwargs)
+        super().__init__(master, bg_color=COLORS["bg_card"], pad=12, hover_elevate=False, shadow=False, scrollable=False, **kwargs)
 
         self._title_label = tk.Text(self.content, wrap=tk.WORD, font=FONT_BODY_BOLD,
                                       fg=COLORS["text_title"], bg=COLORS["bg_card"],
                                       borderwidth=0, highlightthickness=0,
-                                      padx=0, pady=0, state=tk.DISABLED)
+                                      padx=0, pady=0, height=1, state=tk.DISABLED)
         self._title_label.pack(fill=tk.X, pady=(0, 6))
 
         self._journal_label = tk.Label(self.content, text="", font=FONT_CAPTION,
@@ -190,37 +190,37 @@ class MetadataCard(RoundedCard):
                                     anchor=tk.W)
         self._task_label.pack(fill=tk.X)
 
-        # 分隔线
+        # 分隔线 + 摘要（始终存在，show/clear 控制内容）
         self._sep = tk.Frame(self.content, bg=COLORS["border_light"], height=1)
-        self._sep.pack(fill=tk.X, pady=(8, 4))
-
-        # 摘要区域
         abstract_header = tk.Frame(self.content, bg=COLORS["bg_card"])
-        abstract_header.pack(fill=tk.X)
         tk.Label(abstract_header, text="摘要", font=FONT_CAPTION,
                  fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side=tk.LEFT)
 
         self._abstract_text = tk.Text(self.content, wrap=tk.WORD, font=FONT_CAPTION,
                                        fg=COLORS["text_body"], bg=COLORS["bg_card"],
                                        borderwidth=0, highlightthickness=0,
-                                       padx=0, pady=2, state=tk.DISABLED)
-        self._abstract_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self._abstract_scroll = ttk.Scrollbar(self.content, orient=tk.VERTICAL,
+                                       padx=0, pady=2, height=8, state=tk.DISABLED)
+        self._abstract_scroll = ttk.Scrollbar(self._abstract_text, orient=tk.VERTICAL,
                                                command=self._abstract_text.yview)
         self._abstract_text.configure(yscrollcommand=self._abstract_scroll.set)
         self._abstract_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
+        # 先 pack 摘要相关组件，再 pack empty_label（以便切换时用 lift/lower）
+        self._sep.pack(fill=tk.X, pady=(8, 4))
+        abstract_header.pack(fill=tk.X)
+        self._abstract_text.pack(fill=tk.BOTH, expand=True)
+
         self._empty_label = tk.Label(self.content, text="选择文献后查看详情",
                                       font=FONT_CAPTION, fg=COLORS["text_hint"],
                                       bg=COLORS["bg_card"], anchor=tk.CENTER)
-        self._empty_label.pack(fill=tk.X, pady=(30, 0))
+        self._empty_label.pack(fill=tk.BOTH, expand=True)
+
+        self._state = "empty"
 
     def show(self, paper):
         self._empty_label.pack_forget()
-        self._sep.pack(fill=tk.X, pady=(8, 4))
-        self._abstract_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self._abstract_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self._abstract_text.pack(fill=tk.BOTH, expand=True)
+        self._state = "show"
 
         title = paper.get("title", "") or ""
         self._title_label.configure(state=tk.NORMAL)
@@ -258,10 +258,10 @@ class MetadataCard(RoundedCard):
         self._abstract_text.configure(state=tk.DISABLED)
 
     def clear(self):
-        self._empty_label.pack(fill=tk.X, pady=(30, 0))
-        self._sep.pack_forget()
-        self._abstract_text.pack_forget()
-        self._abstract_scroll.pack_forget()
+        if self._state == "empty":
+            return
+        self._empty_label.pack(fill=tk.BOTH, expand=True)
+        self._state = "empty"
         self._title_label.configure(state=tk.NORMAL)
         self._title_label.delete("1.0", tk.END)
         self._title_label.configure(state=tk.DISABLED)
@@ -271,6 +271,9 @@ class MetadataCard(RoundedCard):
         self._task_label.configure(text="")
         for w in self._keywords_frame.winfo_children():
             w.destroy()
+        self._abstract_text.configure(state=tk.NORMAL)
+        self._abstract_text.delete("1.0", tk.END)
+        self._abstract_text.configure(state=tk.DISABLED)
 
     def _open_doi(self, event=None):
         doi = self._doi_label.cget("text").replace("🔗 ", "")
