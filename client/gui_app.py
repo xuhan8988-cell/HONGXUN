@@ -3169,11 +3169,14 @@ A: 点击顶部工具栏的「意见反馈」按钮，
         welcome.geometry(f"+{x}+{y}")
         welcome.grab_set()
 
-    # ===================== 自动更新 =====================
+    # ===================== 自动更新 & 公告 =====================
 
     def _check_update_auto(self):
-        """启动后静默检查更新，有新版则弹窗通知（每版本仅推送一次）"""
+        """启动后静默检查公告 + 更新"""
         try:
+            notice = auto_updater.fetch_notice()
+            if notice:
+                self._show_notice_dialog(notice)
             info = auto_updater.check_update(skip_notified=True)
             if info:
                 self._show_update_dialog(info)
@@ -3195,10 +3198,41 @@ A: 点击顶部工具栏的「意见反馈」按钮，
         """显示更新确认对话框（带版本介绍）"""
         version = info.get("version", "")
         body = info.get("body", "暂无更新说明")
+        self._show_info_dialog(
+            title="发现新版本",
+            subtitle=f"发现新版本 v{version}",
+            footnote=f"当前版本 v{AUTO_UPDATER_VERSION}",
+            body=body,
+            btn_text="立即更新",
+            btn_alt_text="稍后提醒",
+            on_btn=lambda: self._download_and_apply_update(info),
+            on_alt=auto_updater.skip_current_version,
+            on_close_msg="关闭窗口，下次启动仍会提醒",
+        )
 
-        # 创建一个自定义对话框，显示更新内容和功能
+    def _show_notice_dialog(self, notice: dict):
+        """显示公告弹窗"""
+        title = notice.get("title", "公告")
+        body = notice.get("body", "")
+        msg_id = notice.get("msg_id", "")
+        self._show_info_dialog(
+            title=title,
+            subtitle="",
+            footnote="",
+            body=body,
+            btn_text="我知道了",
+            btn_alt_text=None,
+            on_btn=lambda: auto_updater.mark_notice_read(msg_id),
+            on_alt=None,
+            on_close_msg=None,
+        )
+
+    def _show_info_dialog(self, title, subtitle, footnote, body,
+                           btn_text, btn_alt_text, on_btn, on_alt,
+                           on_close_msg):
+        """通用信息展示弹窗（公告/更新共用）"""
         dialog = tk.Toplevel(self.root)
-        dialog.title("发现新版本")
+        dialog.title(title)
         dialog.geometry("500x400")
         dialog.minsize(420, 320)
         dialog.transient(self.root)
@@ -3208,14 +3242,15 @@ A: 点击顶部工具栏的「意见反馈」按钮，
         except Exception:
             pass
 
-        tk.Label(dialog, text=f"发现新版本 v{version}",
-                 font=FONT_TITLE, fg=COLORS["text_title"],
-                 bg=COLORS["bg_page"]).pack(pady=(16, 4))
-        tk.Label(dialog, text=f"当前版本 v{AUTO_UPDATER_VERSION}",
-                 font=FONT_CAPTION, fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_page"]).pack(pady=(0, 12))
+        if subtitle:
+            tk.Label(dialog, text=subtitle,
+                     font=FONT_TITLE, fg=COLORS["text_title"],
+                     bg=COLORS["bg_page"]).pack(pady=(16, 4))
+        if footnote:
+            tk.Label(dialog, text=footnote,
+                     font=FONT_CAPTION, fg=COLORS["text_secondary"],
+                     bg=COLORS["bg_page"]).pack(pady=(0, 12))
 
-        # 更新内容
         text = scrolledtext.ScrolledText(
             dialog, width=54, height=12,
             font=FONT_BODY,
@@ -3231,39 +3266,32 @@ A: 点击顶部工具栏的「意见反馈」按钮，
         text.insert("1.0", body)
         text.configure(state=tk.DISABLED)
 
-        # 操作按钮
         btn_frame = tk.Frame(dialog, bg=COLORS["bg_page"])
         btn_frame.pack(pady=(12, 16))
 
-        result = [None]
-
-        def on_update():
-            result[0] = "update"
+        def on_btn_click():
+            if on_btn:
+                on_btn()
             dialog.destroy()
 
-        def on_skip():
-            result[0] = "skip"
-            dialog.destroy()
-
-        tk.Button(btn_frame, text="立即更新",
+        tk.Button(btn_frame, text=btn_text,
                   font=FONT_BODY, bg=COLORS["primary"], fg="white",
                   relief="flat", padx=20, pady=4, cursor="hand2",
-                  command=on_update).pack(side=tk.LEFT, padx=6)
-        tk.Button(btn_frame, text="稍后提醒",
-                  font=FONT_BODY, bg=COLORS["bg_card"], fg=COLORS["text_body"],
-                  relief="flat", padx=20, pady=4, cursor="hand2",
-                  command=on_skip).pack(side=tk.LEFT, padx=6)
+                  command=on_btn_click).pack(side=tk.LEFT, padx=6)
 
+        if btn_alt_text:
+            def on_alt_click():
+                if on_alt:
+                    on_alt()
+                dialog.destroy()
+            tk.Button(btn_frame, text=btn_alt_text,
+                      font=FONT_BODY, bg=COLORS["bg_card"], fg=COLORS["text_body"],
+                      relief="flat", padx=20, pady=4, cursor="hand2",
+                      command=on_alt_click).pack(side=tk.LEFT, padx=6)
+
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
         dialog.grab_set()
         self.root.wait_window(dialog)
-
-        if result[0] == "update":
-            self._download_and_apply_update(info)
-        elif result[0] == "skip":
-            auto_updater.skip_current_version()
-            messagebox.showinfo("已跳过", f"当前版本 v{AUTO_UPDATER_VERSION} 将继续使用")
-        # result[0] == None: 直接关闭窗口，不做任何标记
-        # 这样下次启动仍会提醒
 
     def _download_and_apply_update(self, info: dict):
         """下载并应用更新"""
