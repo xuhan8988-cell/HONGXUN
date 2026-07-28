@@ -310,6 +310,7 @@ class LibraryView(ttk.Frame):
 
         self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self._tree.bind("<Double-1>", self._on_tree_double)
+        self._tree.bind("<ButtonRelease-1>", self._on_tree_click_column)
         self._tree.bind("<Key-space>", self._toggle_quicklook)
         self._tree.bind("<Escape>", lambda e: self._hide_ql())
 
@@ -430,25 +431,46 @@ class LibraryView(ttk.Frame):
         return papers
 
     def _on_tree_select(self, event):
-        """单击选择条目，更新元数据和 QuickLook。"""
+        """单击选择条目，更新元数据。如果 QuickLook 已展开则不重复插入。"""
         sel = self._tree.selection()
         if not sel:
             self._meta_card.clear()
-            self._hide_ql()
             return
         iid = sel[0]
         p = self._paper_map.get(iid)
         if not p:
             return
-        # 元数据
         self._meta_card.show(p)
-        # QuickLook
-        idx = next((i for i, pp in enumerate(self._papers) if pp.get("id") == p.get("id")), 0)
-        if not self._ql_panel._visible:
-            self._pane.insert(self._ql_panel, 1, weight=2)
-        self._ql_panel.show(p, self._papers, idx)
+        # 如果 QuickLook 已展开则同步更新内容（不反复 insert/forget）
+        if self._ql_panel._visible:
+            idx = next((i for i, pp in enumerate(self._papers) if pp.get("id") == p.get("id")), 0)
+            self._ql_panel.show(p, self._papers, idx)
 
     _on_tree_click = None  # unused, remove from bindings
+
+    def _on_tree_click_column(self, event):
+        """点击状态列循环切换阅读状态。"""
+        col = self._tree.identify_column(event.x)
+        if col == "#1":  # 状态列
+            iid = self._tree.identify_row(event.y)
+            if not iid:
+                return
+            p = self._paper_map.get(iid)
+            if p:
+                cur = p.get("status", "pending")
+                nxt = {"pending": "read", "read": "excluded", "excluded": "pending"}
+                new_status = nxt.get(cur, "pending")
+                update_paper_status(p["id"], new_status)
+                p["status"] = new_status
+                # 更新状态图标
+                icon = STATUS_ICON.get(new_status, "○")
+                values = list(self._tree.item(iid, "values"))
+                values[0] = icon
+                self._tree.item(iid, values=values)
+                # 刷新统计
+                stats = get_stats()
+                self._main_stats_var.set(
+                    f"总计: {stats['total']}  待读: {stats['pending']}  已读: {stats['read']}  排除: {stats['excluded']}")
 
     def _on_tree_double(self, event):
         sel = self._tree.selection()
