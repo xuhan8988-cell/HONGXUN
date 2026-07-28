@@ -1,6 +1,6 @@
 """
 鸿讯 HONGXUN · 文献书架三栏布局
-左: 论文卡片列表 (支持多选)
+左: 论文列表（ttk.Treeview）— 支持多选
 中: QuickLookPanel (inline 预览)
 右: 元数据卡片 (固定 220px)
 """
@@ -8,7 +8,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from gui.theme import COLORS, ICONS, FONT_BODY, FONT_BODY_BOLD, FONT_HEADING, FONT_TITLE, FONT_CAPTION, FONT_LABEL
-from gui.widgets import RoundedCard, StatusPill, IconLabel, IconCache, EmptyState, SkeletonLoader
+from gui.widgets import RoundedCard, EmptyState
 from core.library import (
     get_paper, get_stats, get_all_task_names,
     update_paper_status, batch_update_status,
@@ -16,111 +16,9 @@ from core.library import (
     load_library,
 )
 
-_BATCH_SIZE = 20  # 每批创建的卡片数
-
 STATUS_MAP = {"全部": None, "待读": "pending", "已读": "read", "排除": "excluded"}
 STATUS_ICON = {"pending": "○", "read": "●", "excluded": "✕"}
 STATUS_COLORS = {"pending": COLORS["warning"], "read": COLORS["success"], "excluded": COLORS["danger"]}
-COLOR_BAR = {"pending": COLORS["warning"], "read": COLORS["success"], "excluded": COLORS["danger"]}
-
-
-class PaperCard(tk.Frame):
-    """论文卡片"""
-
-    def __init__(self, master, paper, selected=False, on_click=None,
-                 on_ctrl_click=None, on_shift_click=None,
-                 on_double_click=None):
-        super().__init__(master, bg=COLORS["bg_page"], cursor="hand2")
-        self.paper = paper
-        self._selected = selected
-        self._on_click = on_click
-        self._on_ctrl_click = on_ctrl_click
-        self._on_shift_click = on_shift_click
-        self._on_double_click = on_double_click
-
-        self._build_card()
-        self.bind("<Button-1>", self._handle_click)
-        self.bind("<Double-1>", self._handle_double)
-        self.bind("<Control-Button-1>", self._handle_ctrl_click)
-        self.bind("<Shift-Button-1>", self._handle_shift_click)
-
-    def _build_card(self):
-        self._bg_frame = tk.Frame(self, bg=COLORS["bg_page"])
-        self._bg_frame.pack(fill=tk.BOTH, expand=True)
-
-        # 左侧状态色条 (3px)
-        status = self.paper.get("status", "pending")
-        bar_color = COLOR_BAR.get(status, COLORS["text_hint"])
-        bar = tk.Frame(self._bg_frame, bg=bar_color, width=3)
-        bar.pack(side=tk.LEFT, fill=tk.Y)
-
-        # 内容区域
-        content = tk.Frame(self._bg_frame, bg=COLORS["bg_page"])
-        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 6), pady=4)
-
-        title_text = self.paper.get("title", "") or "无标题"
-        tk.Label(content, text=title_text, font=FONT_BODY,
-                 fg=COLORS["text_title"], bg=COLORS["bg_page"],
-                 anchor=tk.W, wraplength=260).pack(fill=tk.X)
-
-        authors = self.paper.get("authors", "") or ""
-        if authors:
-            # 简化作者显示
-            parts = [a.strip() for a in authors.replace(", ", ",").split(",") if a.strip()]
-            if len(parts) > 2:
-                authors = parts[0] + " et al."
-            tk.Label(content, text=authors, font=FONT_CAPTION,
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_page"],
-                     anchor=tk.W).pack(fill=tk.X)
-
-        journal = self.paper.get("container_title", "") or ""
-        if journal:
-            tk.Label(content, text=journal, font=FONT_CAPTION,
-                     fg=COLORS["text_hint"], bg=COLORS["bg_page"],
-                     anchor=tk.W).pack(fill=tk.X)
-
-        # 转发事件
-        for w in [content] + content.winfo_children():
-            w.bind("<Button-1>", self._handle_click, add="+")
-
-        self._apply_selection()
-
-    def _apply_selection(self):
-        bg = COLORS["selected_bg"] if self._selected else COLORS["bg_page"]
-        self._bg_frame.configure(bg=bg)
-        for w in self._bg_frame.winfo_children():
-            try:
-                w.configure(bg=bg)
-            except Exception:
-                pass
-            try:
-                for sw in w.winfo_children():
-                    sw.configure(bg=bg)
-            except Exception:
-                pass
-
-    def set_selected(self, selected):
-        self._selected = selected
-        self._apply_selection()
-
-    def _handle_click(self, event):
-        if self._on_click:
-            self._on_click(self)
-
-    def _handle_ctrl_click(self, event):
-        if self._on_ctrl_click:
-            self._on_ctrl_click(self)
-        return "break"
-
-    def _handle_shift_click(self, event):
-        if self._on_shift_click:
-            self._on_shift_click(self)
-        return "break"
-
-    def _handle_double(self, event):
-        if self._on_double_click:
-            self._on_double_click(self.paper)
-
 
 class QuickLookPanel(tk.Frame):
     """中栏详情预览"""
@@ -134,19 +32,16 @@ class QuickLookPanel(tk.Frame):
         self._build_ui()
 
     def _build_ui(self):
-        # 标题
         self._title_label = tk.Label(self, text="", font=FONT_TITLE,
                                      fg=COLORS["text_title"], bg=COLORS["bg_page"],
                                      anchor=tk.W, wraplength=500, justify=tk.LEFT)
         self._title_label.pack(fill=tk.X, padx=16, pady=(16, 4))
 
-        # 作者
         self._authors_label = tk.Label(self, text="", font=FONT_BODY,
                                        fg=COLORS["text_secondary"], bg=COLORS["bg_page"],
                                        anchor=tk.W, wraplength=500)
         self._authors_label.pack(fill=tk.X, padx=16, pady=(0, 8))
 
-        # 操作按钮行
         btn_row = tk.Frame(self, bg=COLORS["bg_page"])
         btn_row.pack(fill=tk.X, padx=16, pady=(0, 8))
 
@@ -160,23 +55,19 @@ class QuickLookPanel(tk.Frame):
         self._export_btn.pack(side=tk.LEFT)
         self._export_btn.bind("<Button-1>", lambda e: self._on_export(self._paper) if self._on_export else None)
 
-        # 分隔线
         tk.Frame(self, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 8))
 
-        # 摘要
         self._abstract_text = tk.Text(self, wrap=tk.WORD, font=FONT_BODY,
                                       fg=COLORS["text_body"], bg=COLORS["bg_page"],
                                       borderwidth=0, highlightthickness=0,
                                       padx=16, pady=4, state=tk.DISABLED)
         self._abstract_text.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
 
-        # 滚动条
         scroll = ttk.Scrollbar(self._abstract_text, orient=tk.VERTICAL,
                                command=self._abstract_text.yview)
         self._abstract_text.configure(yscrollcommand=scroll.set)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # 导航
         nav_frame = tk.Frame(self, bg=COLORS["bg_page"])
         nav_frame.pack(fill=tk.X, padx=16, pady=(0, 16))
 
@@ -267,30 +158,25 @@ class MetadataCard(RoundedCard):
     def __init__(self, master, **kwargs):
         super().__init__(master, bg_color=COLORS["bg_card"], pad=12, hover_elevate=False, shadow=False, **kwargs)
 
-        # Journal
         self._journal_label = tk.Label(self.content, text="", font=FONT_BODY,
                                        fg=COLORS["text_body"], bg=COLORS["bg_card"],
                                        anchor=tk.W, wraplength=180)
         self._journal_label.pack(fill=tk.X, pady=(0, 6))
 
-        # DOI
         self._doi_label = tk.Label(self.content, text="", font=FONT_CAPTION,
                                    fg=COLORS["primary"], bg=COLORS["bg_card"],
                                    anchor=tk.W, cursor="hand2", wraplength=180)
         self._doi_label.pack(fill=tk.X, pady=(0, 6))
         self._doi_label.bind("<Button-1>", self._copy_doi)
 
-        # Date
         self._date_label = tk.Label(self.content, text="", font=FONT_CAPTION,
                                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
                                     anchor=tk.W)
         self._date_label.pack(fill=tk.X, pady=(0, 6))
 
-        # Keywords
         self._keywords_frame = tk.Frame(self.content, bg=COLORS["bg_card"])
         self._keywords_frame.pack(fill=tk.X, pady=(0, 6))
 
-        # Source task
         self._task_label = tk.Label(self.content, text="", font=FONT_CAPTION,
                                     fg=COLORS["text_hint"], bg=COLORS["bg_card"],
                                     anchor=tk.W)
@@ -306,7 +192,6 @@ class MetadataCard(RoundedCard):
         pub_date = paper.get("pub_date", "") or paper.get("published_print", "") or ""
         self._date_label.configure(text=f"📅 {pub_date}" if pub_date else "")
 
-        # 关键词
         for w in self._keywords_frame.winfo_children():
             w.destroy()
         keywords = paper.get("matched_keywords", paper.get("keywords", "")) or ""
@@ -334,23 +219,19 @@ class MetadataCard(RoundedCard):
         if doi:
             self.clipboard_clear()
             self.clipboard_append(doi)
-            # Flash feedback
             orig = self._doi_label.cget("fg")
             self._doi_label.configure(fg=COLORS["success"])
             self.after(1000, lambda: self._doi_label.configure(fg=orig) if self._doi_label.winfo_exists() else None)
 
 
 class LibraryView(ttk.Frame):
-    """三栏文献书架"""
+    """三栏文献书架——左栏使用 ttk.Treeview 实现高性能列表"""
 
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
         self._papers = []
-        self._card_widgets = []  # PaperCard list
-        self._selected_ids = set()
-        self._last_clicked_card = None
-        self._ql_paper = None  # current quicklook paper
-
+        self._paper_map = {}
+        self._ql_paper = None
         self._build_ui()
 
     def _build_ui(self):
@@ -403,74 +284,42 @@ class LibraryView(ttk.Frame):
         self._pane = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         self._pane.grid(row=1, column=0, sticky=tk.NSEW)
 
-        # ─ Left Panel: Paper list ──
+        # ─ Left Panel: Treeview ──
         self._left_panel = tk.Frame(self._pane, bg=COLORS["bg_page"])
         self._pane.add(self._left_panel, weight=1)
 
-        # Batch action bar (hidden by default)
-        self._batch_bar = tk.Frame(self._left_panel, bg=COLORS["primary_light"])
-        self._batch_bar.pack(fill=tk.X)
-        self._batch_bar.pack_forget()
+        self._tree = ttk.Treeview(
+            self._left_panel,
+            columns=("status", "title", "authors", "journal", "task", "id"),
+            show="headings",
+            selectmode="extended",
+            height=12,
+        )
+        self._tree.heading("status", text="  ")
+        self._tree.heading("title", text="标题")
+        self._tree.heading("authors", text="作者")
+        self._tree.heading("journal", text="期刊")
+        self._tree.heading("task", text="来源任务")
+        self._tree.heading("id", text="ID")
+        self._tree.column("status", width=30, minwidth=24, anchor=tk.CENTER)
+        self._tree.column("title", width=280, minwidth=150, stretch=True)
+        self._tree.column("authors", width=160, minwidth=80)
+        self._tree.column("journal", width=180, minwidth=100)
+        self._tree.column("task", width=100, minwidth=60)
+        self._tree.column("id", width=0, stretch=False)
 
-        tk.Label(self._batch_bar, text="", font=FONT_CAPTION,
-                 fg=COLORS["primary"], bg=COLORS["primary_light"],
-                 padx=8).pack(side=tk.LEFT)
+        self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self._tree.bind("<Double-1>", self._on_tree_double)
+        self._tree.bind("<ButtonRelease-1>", self._on_tree_click)
+        self._tree.bind("<Key-space>", self._toggle_quicklook)
+        self._tree.bind("<Escape>", lambda e: self._hide_ql())
 
-        for text, status in [("标记已读", "read"), ("标记待读", "pending"), ("导出选中", None)]:
-            btn = tk.Label(self._batch_bar, text=text, font=FONT_CAPTION,
-                           fg=COLORS["primary"], bg=COLORS["primary_light"],
-                           cursor="hand2", padx=8)
-            btn.pack(side=tk.LEFT)
-            if status:
-                btn.bind("<Button-1>", lambda e, s=status: self._batch_set_status(s))
-            else:
-                btn.bind("<Button-1>", lambda e: self._batch_export())
+        tree_scroll = ttk.Scrollbar(self._left_panel, orient=tk.VERTICAL,
+                                    command=self._tree.yview)
+        self._tree.configure(yscrollcommand=tree_scroll.set)
 
-        clear_btn = tk.Label(self._batch_bar, text="取消选择", font=FONT_CAPTION,
-                             fg=COLORS["text_hint"], bg=COLORS["primary_light"],
-                             cursor="hand2", padx=8)
-        clear_btn.pack(side=tk.RIGHT)
-        clear_btn.bind("<Button-1>", lambda e: self._clear_selection())
-
-        # Scrollable paper list
-        self._list_canvas = tk.Canvas(self._left_panel, borderwidth=0,
-                                      highlightthickness=0, bg=COLORS["bg_page"])
-        list_scrollbar = ttk.Scrollbar(self._left_panel, orient=tk.VERTICAL,
-                                       command=self._list_canvas.yview)
-        self._list_canvas.configure(yscrollcommand=list_scrollbar.set)
-
-        self._list_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self._list_inner = tk.Frame(self._list_canvas, bg=COLORS["bg_page"])
-        self._list_inner.bind("<Configure>",
-                              lambda e: self._list_canvas.configure(
-                                  scrollregion=self._list_canvas.bbox("all")))
-        self._list_canvas_window = self._list_canvas.create_window(
-            (0, 0), window=self._list_inner, anchor=tk.NW)
-
-        def _configure_list_width(event):
-            self._list_canvas.itemconfig(self._list_canvas_window,
-                                         width=max(event.width - 4, 260))
-        self._list_canvas.bind("<Configure>", _configure_list_width)
-
-        # Mousweheel
-        def _on_mw(event):
-            self._list_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        def _bind_mw(event):
-            self._list_canvas.bind_all("<MouseWheel>", _on_mw, add="+")
-
-        def _unbind_mw(event):
-            self._list_canvas.unbind_all("<MouseWheel>")
-
-        self._list_inner.bind("<Enter>", _bind_mw)
-        self._list_inner.bind("<Leave>", _unbind_mw)
-
-        # Space key for QuickLook
-        self._list_inner.bind("<Key-space>", self._toggle_quicklook)
-        self._list_inner.bind("<Escape>", lambda e: self._hide_ql())
-        self._list_inner.focus_set()
+        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         # ─ Center Panel: QuickLook ──
         self._ql_panel = QuickLookPanel(
@@ -478,7 +327,6 @@ class LibraryView(ttk.Frame):
             on_status_change=self._on_ql_status_change,
             on_export=lambda p: None,
         )
-        # Not added to pane by default — added when show() is called
 
         # ─ Right Panel: Metadata ──
         self._right_panel = tk.Frame(self._pane, bg=COLORS["bg_page"], width=220)
@@ -487,7 +335,6 @@ class LibraryView(ttk.Frame):
         self._meta_card = MetadataCard(self._right_panel)
         self._meta_card.pack(fill=tk.X, padx=8, pady=(0, 8))
 
-        # Stats at bottom
         stats_frame = tk.Frame(self._right_panel, bg=COLORS["bg_card"])
         stats_frame.pack(fill=tk.X, padx=8)
         self._stats_var = tk.StringVar(value="总计: 0 篇")
@@ -495,7 +342,7 @@ class LibraryView(ttk.Frame):
                  font=FONT_CAPTION, fg=COLORS["text_secondary"],
                  bg=COLORS["bg_card"], anchor=tk.W).pack(side=tk.LEFT, padx=12, pady=6)
 
-        # ── Row 2: Stats bar (below pane) ──
+        # ── Row 2: Stats bar ──
         stats_bar = tk.Frame(self, bg=COLORS["bg_card"],
                              highlightbackground=COLORS["border_light"],
                              highlightthickness=1)
@@ -505,7 +352,6 @@ class LibraryView(ttk.Frame):
                  font=FONT_CAPTION, fg=COLORS["text_secondary"],
                  bg=COLORS["bg_card"], anchor=tk.W).pack(side=tk.LEFT, padx=16, pady=6)
 
-        # Empty state (initially hidden)
         self._empty_state = EmptyState(self, icon="search",
                                         title="文献书架是空的",
                                         subtitle="执行检索后，论文会自动出现在这里")
@@ -515,36 +361,11 @@ class LibraryView(ttk.Frame):
     def refresh(self):
         self._refresh()
 
-    def _refresh_lazy(self, batch_start=0):
-        """分批加载卡片，避免 UI 线程长时间阻塞。"""
-        batch = self._papers[batch_start:batch_start + _BATCH_SIZE]
-        for paper in batch:
-            card = PaperCard(self._list_inner, paper,
-                             on_click=self._on_card_click,
-                             on_ctrl_click=self._on_card_ctrl_click,
-                             on_shift_click=self._on_card_shift_click,
-                             on_double_click=self._on_card_double_click)
-            card.pack(fill=tk.X, padx=4, pady=(0, 2))
-            self._card_widgets.append(card)
-
-        next_start = batch_start + _BATCH_SIZE
-        if next_start < len(self._papers):
-            # 下一批用 after 调度，让 UI 来得及刷新
-            self.after(10, lambda: self._refresh_lazy(next_start))
-        else:
-            # 最后一批完成，更新统计
-            stats = get_stats()
-            self._main_stats_var.set(
-                f"总计: {stats['total']}  待读: {stats['pending']}  已读: {stats['read']}  排除: {stats['excluded']}")
-            self._stats_var.set(f"总计: {len(self._papers)} 篇")
-
     def _refresh(self):
-        # 缓存 library 数据，避免反复读取 JSON
-        self._lib_cache = load_library()
-
-        # Update task names
+        lib = load_library()
         task_names = get_all_task_names()
         current_task_val = self._task_var.get()
+
         self._task_combo["values"] = ["全部"] + task_names
         if current_task_val not in ["全部"] + task_names:
             self._task_var.set("全部")
@@ -554,21 +375,19 @@ class LibraryView(ttk.Frame):
         task_filter = self._task_var.get()
         task_filter = None if task_filter == "全部" else task_filter
 
-        # 在内存中过滤，不重复读 JSON
-        all_papers = self._lib_cache.get("papers", [])
+        papers = lib.get("papers", [])
         if status:
-            all_papers = [p for p in all_papers if p.get("status") == status]
+            papers = [p for p in papers if p.get("status") == status]
         if search_text:
             q = search_text.lower()
-            all_papers = [p for p in all_papers if q in p.get("title", "").lower()]
+            papers = [p for p in papers if q in p.get("title", "").lower()]
         if task_filter:
-            all_papers = [p for p in all_papers if p.get("task_name") == task_filter]
-        self._papers = all_papers
+            papers = [p for p in papers if p.get("task_name") == task_filter]
+        self._papers = papers
 
-        # Toggle empty state
-        if not self._papers:
+        if not papers:
             self._empty_state.grid()
-            self._list_inner.pack_forget()
+            self._tree.pack_forget()
             self._stats_var.set("总计: 0 篇")
             self._main_stats_var.set("总计: 0  待读: 0  已读: 0  排除: 0")
             self._hide_ql()
@@ -576,81 +395,89 @@ class LibraryView(ttk.Frame):
             return
 
         self._empty_state.grid_remove()
-        self._list_inner.pack(fill=tk.BOTH, expand=True)
+        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Destroy old cards
-        for w in self._list_inner.winfo_children():
-            w.destroy()
-        self._card_widgets = []
-        self._selected_ids = set()
-        self._last_clicked_card = None
+        for item in self._tree.get_children():
+            self._tree.delete(item)
+        self._paper_map = {}
 
-        # 分批懒加载（每批 20 张，用 after 让 UI 呼吸）
-        self._refresh_lazy(0)
+        for p in papers:
+            title = (p.get("title") or "")[:100]
+            authors = (p.get("authors") or "")
+            if authors:
+                parts = [a.strip() for a in authors.replace(", ", ",").split(",") if a.strip()]
+                if len(parts) > 2:
+                    authors = parts[0] + " et al."
+            journal = (p.get("container_title") or "")[:60]
+            task_name = (p.get("task_name") or "")[:30]
+            status_icon = STATUS_ICON.get(p.get("status", "pending"), "○")
 
-    def _on_card_click(self, card):
-        self._clear_selection()
-        self._selected_ids.add(card.paper["id"])
-        card.set_selected(True)
-        self._last_clicked_card = card
-        self._show_detail(card)
-        self._update_batch_bar()
+            iid = self._tree.insert("", tk.END, values=(
+                status_icon, title, authors, journal, task_name, p.get("id", "")))
+            self._paper_map[iid] = p
 
-    def _on_card_ctrl_click(self, card):
-        if card.paper["id"] in self._selected_ids:
-            self._selected_ids.discard(card.paper["id"])
-            card.set_selected(False)
-        else:
-            self._selected_ids.add(card.paper["id"])
-            card.set_selected(True)
-        self._last_clicked_card = card
-        self._update_batch_bar()
+        stats = get_stats()
+        self._main_stats_var.set(
+            f"总计: {stats['total']}  待读: {stats['pending']}  已读: {stats['read']}  排除: {stats['excluded']}")
+        self._stats_var.set(f"总计: {len(papers)} 篇")
 
-    def _on_card_shift_click(self, card):
-        if self._last_clicked_card and self._last_clicked_card in self._card_widgets:
-            last_idx = self._card_widgets.index(self._last_clicked_card)
-            current_idx = self._card_widgets.index(card)
-            start, end = (last_idx, current_idx) if last_idx <= current_idx else (current_idx, last_idx)
-            for i in range(start, end + 1):
-                c = self._card_widgets[i]
-                self._selected_ids.add(c.paper["id"])
-                c.set_selected(True)
-        self._update_batch_bar()
+    def _get_selected_papers(self):
+        sel = self._tree.selection()
+        papers = []
+        for iid in sel:
+            p = self._paper_map.get(iid)
+            if p:
+                papers.append(p)
+        return papers
 
-    def _on_card_double_click(self, paper):
-        # Trigger existing abstract popup (handled by gui_app.py)
-        if hasattr(self.master, 'master') and hasattr(self.master.master, '_show_abstract_popup'):
-            self.master.master._show_abstract_popup(paper["id"])
+    def _on_tree_select(self, event):
+        pass
 
-    def _show_detail(self, card):
-        self._meta_card.show(card.paper)
+    def _on_tree_click(self, event):
+        sel = self._tree.selection()
+        if not sel:
+            self._meta_card.clear()
+            self._hide_ql()
+            return
+        iid = sel[0]
+        p = self._paper_map.get(iid)
+        if not p:
+            return
+        self._meta_card.show(p)
 
-        # Show in QuickLook center panel
-        idx = self._card_widgets.index(card) if card in self._card_widgets else 0
+        idx = next((i for i, pp in enumerate(self._papers) if pp.get("id") == p.get("id")), 0)
         if not self._ql_panel._visible:
             self._pane.insert(self._ql_panel, 1, weight=2)
-        self._ql_panel.show(card.paper, self._papers, idx)
+        self._ql_panel.show(p, self._papers, idx)
+
+    def _on_tree_double(self, event):
+        sel = self._tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        p = self._paper_map.get(iid)
+        if p and hasattr(self.master, 'master') and hasattr(self.master.master, '_show_abstract_popup'):
+            self.master.master._show_abstract_popup(p["id"])
 
     def _toggle_quicklook(self, event=None):
-        if not self._card_widgets:
+        if not self._papers:
             return
-        # Toggle last selected paper
-        target = None
-        if self._last_clicked_card:
-            target = self._last_clicked_card.paper
-        elif self._card_widgets:
-            target = self._card_widgets[0].paper
-
-        if target and self._ql_panel._visible and self._ql_panel._paper and \
-                self._ql_panel._paper.get("id") == target.get("id"):
+        sel = self._tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        p = self._paper_map.get(iid)
+        if not p:
+            return
+        if self._ql_panel._visible and self._ql_panel._paper and \
+                self._ql_panel._paper.get("id") == p.get("id"):
             self._hide_ql()
-        elif target:
-            idx = next((i for i, c in enumerate(self._card_widgets) if c.paper.get("id") == target.get("id")), 0)
+        else:
             if not self._ql_panel._visible:
                 self._pane.insert(self._ql_panel, 1, weight=2)
-            self._ql_panel.show(target, self._papers, idx)
-            # Also show metadata
-            self._meta_card.show(target)
+            idx = next((i for i, pp in enumerate(self._papers) if pp.get("id") == p.get("id")), 0)
+            self._ql_panel.show(p, self._papers, idx)
+            self._meta_card.show(p)
 
     def _hide_ql(self):
         if self._ql_panel._visible:
@@ -658,61 +485,13 @@ class LibraryView(ttk.Frame):
             self._ql_panel.hide()
 
     def _on_ql_status_change(self, paper_id, new_status):
-        # Refresh cards to show updated status
         self._refresh()
-
-    def _clear_selection(self):
-        for card in self._card_widgets:
-            card.set_selected(False)
-        self._selected_ids.clear()
-        self._meta_card.clear()
-        self._hide_ql()
-        self._update_batch_bar()
-
-    def _update_batch_bar(self):
-        n = len(self._selected_ids)
-        if n >= 2:
-            children = self._batch_bar.pack_info() if len(self._batch_bar.pack_info()) > 0 else {}
-            if not children:
-                self._batch_bar.pack(fill=tk.X, before=self._list_canvas)
-            # Update count label
-            for w in self._batch_bar.winfo_children():
-                if isinstance(w, tk.Label) and "已选" in (w.cget("text") or ""):
-                    w.configure(text=f"已选 {n} 篇")
-                    break
-        else:
-            try:
-                self._batch_bar.pack_forget()
-            except Exception:
-                pass
-
-    def _batch_set_status(self, status):
-        if not self._selected_ids:
-            return
-        n = batch_update_status(list(self._selected_ids), status)
-        self._clear_selection()
-        self._refresh()
-
-    def _batch_export(self):
-        if not self._selected_ids:
-            return
-        papers = [p for p in self._papers if p["id"] in self._selected_ids]
-        if not papers:
-            return
-        from tkinter import filedialog, messagebox
-        fp = filedialog.asksaveasfilename(
-            defaultextension=".ris",
-            filetypes=[("RIS 文件", "*.ris")],
-            initialfile="hongxun_export.ris")
-        if fp:
-            export_ris(papers, fp)
-            messagebox.showinfo("导出成功", f"已导出 {len(papers)} 篇论文")
 
     def _export_ris(self):
         if not self._papers:
             messagebox.showwarning("提示", "书架为空，无数据可导出")
             return
-        from tkinter import filedialog, messagebox
+        from tkinter import filedialog
         fp = filedialog.asksaveasfilename(
             defaultextension=".ris",
             filetypes=[("RIS 文件", "*.ris")],
@@ -720,3 +499,23 @@ class LibraryView(ttk.Frame):
         if fp:
             export_ris(self._papers, fp)
             messagebox.showinfo("导出成功", f"已导出 {len(self._papers)} 篇论文")
+
+    def _batch_set_status(self, status):
+        sel_ids = [p["id"] for p in self._get_selected_papers() if p.get("id")]
+        if not sel_ids:
+            return
+        batch_update_status(sel_ids, status)
+        self._refresh()
+
+    def _batch_export(self):
+        papers = self._get_selected_papers()
+        if not papers:
+            return
+        from tkinter import filedialog
+        fp = filedialog.asksaveasfilename(
+            defaultextension=".ris",
+            filetypes=[("RIS 文件", "*.ris")],
+            initialfile="hongxun_export.ris")
+        if fp:
+            export_ris(papers, fp)
+            messagebox.showinfo("导出成功", f"已导出 {len(papers)} 篇论文")
