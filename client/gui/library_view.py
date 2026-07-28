@@ -7,6 +7,7 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+import webbrowser
 from gui.theme import COLORS, ICONS, FONT_BODY, FONT_BODY_BOLD, FONT_HEADING, FONT_TITLE, FONT_CAPTION, FONT_LABEL
 from gui.widgets import RoundedCard, EmptyState
 from core.library import (
@@ -17,7 +18,7 @@ from core.library import (
 )
 
 STATUS_MAP = {"全部": None, "待读": "pending", "已读": "read", "排除": "excluded"}
-STATUS_ICON = {"pending": "●", "read": "●", "excluded": "✕"}
+STATUS_ICON = {"pending": "○", "read": "▲", "excluded": "★"}
 STATUS_COLORS = {"pending": COLORS["text_hint"], "read": COLORS["success"], "excluded": COLORS["danger"]}
 STATUS_LABELS = {"pending": "待读", "read": "已读", "excluded": "排除"}
 
@@ -157,33 +158,76 @@ class MetadataCard(RoundedCard):
     """右侧元数据卡片"""
 
     def __init__(self, master, **kwargs):
-        super().__init__(master, bg_color=COLORS["bg_card"], pad=12, hover_elevate=False, shadow=False, **kwargs)
+        super().__init__(master, bg_color=COLORS["bg_card"], pad=12, hover_elevate=False, shadow=False, scrollable=True, **kwargs)
 
-        self._journal_label = tk.Label(self.content, text="", font=FONT_BODY,
+        self._title_label = tk.Text(self.content, wrap=tk.WORD, font=FONT_BODY_BOLD,
+                                      fg=COLORS["text_title"], bg=COLORS["bg_card"],
+                                      borderwidth=0, highlightthickness=0,
+                                      padx=0, pady=0, state=tk.DISABLED)
+        self._title_label.pack(fill=tk.X, pady=(0, 6))
+
+        self._journal_label = tk.Label(self.content, text="", font=FONT_CAPTION,
                                        fg=COLORS["text_body"], bg=COLORS["bg_card"],
                                        anchor=tk.W, wraplength=180)
-        self._journal_label.pack(fill=tk.X, pady=(0, 6))
+        self._journal_label.pack(fill=tk.X, pady=(0, 4))
 
         self._doi_label = tk.Label(self.content, text="", font=FONT_CAPTION,
                                    fg=COLORS["primary"], bg=COLORS["bg_card"],
                                    anchor=tk.W, cursor="hand2", wraplength=180)
-        self._doi_label.pack(fill=tk.X, pady=(0, 6))
-        self._doi_label.bind("<Button-1>", self._copy_doi)
+        self._doi_label.pack(fill=tk.X, pady=(0, 4))
+        self._doi_label.bind("<Button-1>", self._open_doi)
 
         self._date_label = tk.Label(self.content, text="", font=FONT_CAPTION,
                                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
                                     anchor=tk.W)
-        self._date_label.pack(fill=tk.X, pady=(0, 6))
+        self._date_label.pack(fill=tk.X, pady=(0, 4))
 
         self._keywords_frame = tk.Frame(self.content, bg=COLORS["bg_card"])
-        self._keywords_frame.pack(fill=tk.X, pady=(0, 6))
+        self._keywords_frame.pack(fill=tk.X, pady=(0, 4))
 
         self._task_label = tk.Label(self.content, text="", font=FONT_CAPTION,
                                     fg=COLORS["text_hint"], bg=COLORS["bg_card"],
                                     anchor=tk.W)
         self._task_label.pack(fill=tk.X)
 
+        # 分隔线
+        self._sep = tk.Frame(self.content, bg=COLORS["border_light"], height=1)
+        self._sep.pack(fill=tk.X, pady=(8, 4))
+
+        # 摘要区域
+        abstract_header = tk.Frame(self.content, bg=COLORS["bg_card"])
+        abstract_header.pack(fill=tk.X)
+        tk.Label(abstract_header, text="摘要", font=FONT_CAPTION,
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(side=tk.LEFT)
+
+        self._abstract_text = tk.Text(self.content, wrap=tk.WORD, font=FONT_CAPTION,
+                                       fg=COLORS["text_body"], bg=COLORS["bg_card"],
+                                       borderwidth=0, highlightthickness=0,
+                                       padx=0, pady=2, state=tk.DISABLED)
+        self._abstract_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._abstract_scroll = ttk.Scrollbar(self.content, orient=tk.VERTICAL,
+                                               command=self._abstract_text.yview)
+        self._abstract_text.configure(yscrollcommand=self._abstract_scroll.set)
+        self._abstract_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._empty_label = tk.Label(self.content, text="选择文献后查看详情",
+                                      font=FONT_CAPTION, fg=COLORS["text_hint"],
+                                      bg=COLORS["bg_card"], anchor=tk.CENTER)
+        self._empty_label.pack(fill=tk.X, pady=(30, 0))
+
     def show(self, paper):
+        self._empty_label.pack_forget()
+        self._sep.pack(fill=tk.X, pady=(8, 4))
+        self._abstract_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._abstract_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        title = paper.get("title", "") or ""
+        self._title_label.configure(state=tk.NORMAL)
+        self._title_label.delete("1.0", tk.END)
+        self._title_label.insert("1.0", title)
+        self._title_label.configure(state=tk.DISABLED)
+
         journal = paper.get("container_title", "") or ""
         self._journal_label.configure(text=f"📖 {journal}" if journal else "")
 
@@ -207,7 +251,20 @@ class MetadataCard(RoundedCard):
         task = paper.get("task_name", "") or ""
         self._task_label.configure(text=f"📎 {task}" if task else "")
 
+        abstract = paper.get("abstract", "") or ""
+        self._abstract_text.configure(state=tk.NORMAL)
+        self._abstract_text.delete("1.0", tk.END)
+        self._abstract_text.insert("1.0", abstract if abstract else "暂无摘要")
+        self._abstract_text.configure(state=tk.DISABLED)
+
     def clear(self):
+        self._empty_label.pack(fill=tk.X, pady=(30, 0))
+        self._sep.pack_forget()
+        self._abstract_text.pack_forget()
+        self._abstract_scroll.pack_forget()
+        self._title_label.configure(state=tk.NORMAL)
+        self._title_label.delete("1.0", tk.END)
+        self._title_label.configure(state=tk.DISABLED)
         self._journal_label.configure(text="")
         self._doi_label.configure(text="")
         self._date_label.configure(text="")
@@ -215,14 +272,16 @@ class MetadataCard(RoundedCard):
         for w in self._keywords_frame.winfo_children():
             w.destroy()
 
-    def _copy_doi(self, event=None):
+    def _open_doi(self, event=None):
         doi = self._doi_label.cget("text").replace("🔗 ", "")
         if doi:
             self.clipboard_clear()
             self.clipboard_append(doi)
+            url = f"https://doi.org/{doi}"
+            webbrowser.open(url)
             orig = self._doi_label.cget("fg")
             self._doi_label.configure(fg=COLORS["success"])
-            self.after(1000, lambda: self._doi_label.configure(fg=orig) if self._doi_label.winfo_exists() else None)
+            self.after(1500, lambda: self._doi_label.configure(fg=orig) if self._doi_label.winfo_exists() else None)
 
 
 class LibraryView(ttk.Frame):
@@ -233,6 +292,9 @@ class LibraryView(ttk.Frame):
         self._papers = []
         self._paper_map = {}
         self._ql_paper = None
+        self._pend_ar = None  # 状态列点击标记
+        self._click_timer = None  # 双击检测计时器
+        self._last_click = None  # (iid, col) 上次点击信息
         self._build_ui()
 
     def _build_ui(self):
@@ -277,9 +339,6 @@ class LibraryView(ttk.Frame):
         export_btn = ttk.Button(toolbar, text="📤 导出 RIS", style="Primary.TButton",
                                 command=self._export_ris)
         export_btn.grid(row=0, column=6, padx=(0, 4))
-        refresh_btn = ttk.Button(toolbar, text="↻", style="Secondary.TButton",
-                                 command=self._refresh)
-        refresh_btn.grid(row=0, column=7)
 
         # ── Row 1: Three-column PanedWindow ──
         self._pane = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
@@ -309,9 +368,14 @@ class LibraryView(ttk.Frame):
         self._tree.column("task", width=100, minwidth=60)
         self._tree.column("id", width=0, stretch=False)
 
+        self._tree.tag_configure("status_pending", foreground=STATUS_COLORS["pending"])
+        self._tree.tag_configure("status_read", foreground=STATUS_COLORS["read"])
+        self._tree.tag_configure("status_excluded", foreground=STATUS_COLORS["excluded"])
+
         self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self._tree.bind("<Double-1>", self._on_tree_double)
-        self._tree.bind("<ButtonRelease-1>", self._on_tree_click_column)
+        self._tree.bind("<Button-1>", self._on_tree_press, add="+")
+        self._tree.bind("<ButtonRelease-1>", self._on_tree_release)
         self._tree.bind("<Key-space>", self._toggle_quicklook)
         self._tree.bind("<Escape>", lambda e: self._hide_ql())
 
@@ -330,13 +394,15 @@ class LibraryView(ttk.Frame):
         )
 
         # ─ Right Panel: Metadata ──
-        self._right_panel = tk.Frame(self._pane, bg=COLORS["bg_page"], width=220)
+        self._right_panel = tk.Frame(self._pane, bg=COLORS["sidebar_bg"], width=220)
         self._pane.add(self._right_panel, weight=0)
 
         self._meta_card = MetadataCard(self._right_panel)
-        self._meta_card.pack(fill=tk.X, padx=8, pady=(0, 8))
+        self._meta_card.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
-        stats_frame = tk.Frame(self._right_panel, bg=COLORS["bg_card"])
+        stats_frame = tk.Frame(self._right_panel, bg=COLORS["bg_card"],
+                               highlightbackground=COLORS["border_light"],
+                               highlightthickness=1)
         stats_frame.pack(fill=tk.X, padx=8)
         self._stats_var = tk.StringVar(value="总计: 0 篇")
         tk.Label(stats_frame, textvariable=self._stats_var,
@@ -412,9 +478,11 @@ class LibraryView(ttk.Frame):
             journal = (p.get("container_title") or "")[:60]
             task_name = (p.get("task_name") or "")[:30]
             status_icon = STATUS_ICON.get(p.get("status", "pending"), "○")
+            status_tag = f"status_{p.get('status', 'pending')}"
 
             iid = self._tree.insert("", tk.END, values=(
-                status_icon, title, authors, journal, task_name, p.get("id", "")))
+                status_icon, title, authors, journal, task_name, p.get("id", "")),
+                tags=(status_tag,))
             self._paper_map[iid] = p
 
         stats = get_stats()
@@ -439,13 +507,13 @@ class LibraryView(ttk.Frame):
         if iid:
             vals = list(self._tree.item(iid, "values"))
             vals[0] = icon
-            self._tree.item(iid, values=vals)
+            self._tree.item(iid, values=vals, tags=(f"status_{new_status}",))
         stats = get_stats()
         self._main_stats_var.set(
             f"总计: {stats['total']}  待读: {stats['pending']}  已读: {stats['read']}  排除: {stats['excluded']}")
 
     def _on_tree_select(self, event):
-        """单击——自动标记已读，更新元数据。"""
+        """Selection change — auto-mark pending as read (unless status col clicked); update metadata."""
         sel = self._tree.selection()
         if not sel:
             self._meta_card.clear()
@@ -454,8 +522,8 @@ class LibraryView(ttk.Frame):
         p = self._paper_map.get(iid)
         if not p:
             return
-        # 自动标记为已读
-        if p.get("status") != "read":
+        # 点击状态列时跳过自动已读（交给 _on_tree_click_column）
+        if self._pend_ar is None and p.get("status") == "pending":
             self._mark_paper(p, "read", iid=iid)
         self._meta_card.show(p)
         if self._ql_panel._visible:
@@ -464,19 +532,55 @@ class LibraryView(ttk.Frame):
 
     _on_tree_click = None  # unused, remove from bindings
 
-    def _on_tree_click_column(self, event):
-        """点击状态列循环切换阅读状态。"""
+    def _on_tree_press(self, event):
+        """Button-1: status column handled immediately; non-status defers to timer."""
         col = self._tree.identify_column(event.x)
-        if col == "#1":
-            iid = self._tree.identify_row(event.y)
-            if not iid:
-                return
+        iid = self._tree.identify_row(event.y)
+
+        # 状态列立即处理，不参与双击检测
+        if col == "#1" and iid:
             p = self._paper_map.get(iid)
             if p:
                 cur = p.get("status", "pending")
                 nxt = {"pending": "read", "read": "excluded", "excluded": "pending"}
-                new_status = nxt.get(cur, "pending")
-                self._mark_paper(p, new_status, iid=iid)
+                self._mark_paper(p, nxt.get(cur, "pending"), iid=iid)
+            self._pend_ar = iid
+            self._last_click = None
+            return
+
+        self._pend_ar = None
+
+    def _on_tree_release(self, event):
+        """ButtonRelease: 0.2s 内再次按下载判为双击，否则执行单击自动已读."""
+        col = self._tree.identify_column(event.x)
+        iid = self._tree.identify_row(event.y)
+        if col == "#1" or not iid or not self._paper_map.get(iid):
+            self._last_click = None
+            return
+
+        p = self._paper_map.get(iid)
+        now = (iid, col)
+
+        if self._last_click == now and self._click_timer:
+            # 同一位置再次点击 —— 取消定时器，判为双击
+            self.after_cancel(self._click_timer)
+            self._click_timer = None
+            self._last_click = None
+            return
+
+        # 清除旧定时器，设新定时器
+        if self._click_timer:
+            self.after_cancel(self._click_timer)
+
+        self._last_click = now
+
+        def _do_click():
+            if p.get("status") == "pending":
+                self._mark_paper(p, "read", iid=iid)
+            self._click_timer = None
+            self._last_click = None
+
+        self._click_timer = self.after(200, _do_click)
 
     def _on_tree_double(self, event):
         sel = self._tree.selection()

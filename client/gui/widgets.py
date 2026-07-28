@@ -292,7 +292,7 @@ class RoundedCard(tk.Frame):
     """Canvas 绘制圆角矩形 + 多层阴影的卡片容器"""
 
     def __init__(self, master, radius=10, bg_color="#FFFFFF", pad=14,
-                 hover_elevate=False, shadow=True, **kwargs):
+                 hover_elevate=False, shadow=True, scrollable=False, **kwargs):
         # Pop 'bg' if passed in kwargs (duplicated by bg_color)
         kwargs.pop('bg', None)
         self._radius = radius
@@ -302,13 +302,22 @@ class RoundedCard(tk.Frame):
         self._shadow_enabled = shadow
         self._shadow_offset_base = 2
         self._shadow_offset = 2
+        self._scrollable = scrollable
 
         super().__init__(master, bg=COLORS["bg_page"], **kwargs)
         self._canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0,
                                  bg=COLORS["bg_page"])
         self._canvas.pack(fill=tk.BOTH, expand=True)
 
+        if scrollable:
+            self._v_scroll = ttk.Scrollbar(self, orient=tk.VERTICAL,
+                                           command=self._canvas.yview)
+            self._v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+            self._canvas.configure(yscrollcommand=self._v_scroll.set)
+
         self.content = tk.Frame(self._canvas, bg=bg_color)
+        if not scrollable:
+            self.content.pack_propagate(False)
         self._canvas_window = self._canvas.create_window(
             (pad, pad), window=self.content, anchor=tk.NW,
             tags="content"
@@ -321,22 +330,40 @@ class RoundedCard(tk.Frame):
             self._canvas.bind("<Enter>", self._on_enter)
             self._canvas.bind("<Leave>", self._on_leave)
 
+        if scrollable:
+            self._bind_mousewheel()
+
+    def _bind_mousewheel(self):
+        def _on_mousewheel(event):
+            self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        if self._scrollable:
+            self._canvas.bind("<Enter>", lambda e: self._canvas.bind_all("<MouseWheel>", _on_mousewheel))
+            self._canvas.bind("<Leave>", lambda e: self._canvas.unbind_all("<MouseWheel>"))
+
     def _on_configure(self, event):
         w = self.winfo_width()
         h = self.winfo_height()
         if w > 10 and h > 10:
             self._canvas.configure(width=w, height=h)
+            if self._scrollable:
+                self._canvas.itemconfig(self._canvas_window,
+                                        width=w - self._pad * 2)
+            else:
+                self._canvas.itemconfig(self._canvas_window,
+                                        width=w - self._pad * 2,
+                                        height=h - self._pad * 2)
             self._draw()
+            if self._scrollable:
+                self._update_scrollregion()
 
     def _on_content_configure(self, event):
-        self._canvas.itemconfig(self._canvas_window,
-                                width=max(event.width, 10))
-        self._update_canvas_size()
+        if self._scrollable:
+            self._update_scrollregion()
 
-    def _update_canvas_size(self):
-        cw = self.content.winfo_reqwidth() + self._pad * 2
+    def _update_scrollregion(self):
         ch = self.content.winfo_reqheight() + self._pad * 2
-        self._canvas.configure(width=cw, height=ch)
+        cw = self._canvas.winfo_width()
+        self._canvas.configure(scrollregion=(0, 0, cw, ch))
 
     def _draw(self):
         self._canvas.delete("shadow", "bg")
@@ -348,13 +375,15 @@ class RoundedCard(tk.Frame):
         r = self._radius
         so = self._shadow_offset
 
+        outline_color = COLORS["border_light"] if not self._shadow_enabled else ""
+
         if self._shadow_enabled:
             # 单层阴影 + 1px 边框（替代原 3 层阴影）
             self._rounded_rect(so, so + 1, w - so, h - so + 1,
                                r + 1, fill="#E8E8ED", outline="", tags="shadow")
 
         self._rounded_rect(0, 0, w, h, r,
-                           fill=self._bg_color, outline="", tags="bg")
+                           fill=self._bg_color, outline=outline_color, tags="bg")
 
     def _rounded_rect(self, x1, y1, x2, y2, r, **kwargs):
         pts = [

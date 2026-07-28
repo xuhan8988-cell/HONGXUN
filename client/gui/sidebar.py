@@ -43,12 +43,15 @@ class TaskCard(tk.Frame):
         row = tk.Frame(self, bg=bg)
         row.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 4), pady=4)
 
-        # 状态点
+        # 状态点：运行中显示蓝色，选中显示绿色，未选中灰色
         if self._running:
             dot_color = COLORS["primary"]
-            dot_text = "◉"  # 实心运行中
+            dot_text = "◉"
+        elif self._selected:
+            dot_color = COLORS["dot_on"]
+            dot_text = "●"
         else:
-            dot_color = COLORS["dot_on"] if self._enabled else COLORS["dot_off"]
+            dot_color = COLORS["dot_off"]
             dot_text = "●"
         tk.Label(row, text=dot_text, font=FONT_CAPTION,
                  fg=dot_color, bg=bg).pack(side=tk.LEFT, padx=(0, 4))
