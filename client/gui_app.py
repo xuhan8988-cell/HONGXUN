@@ -1058,13 +1058,22 @@ class PaperMonitorApp:
         self._search_cancel_token = f"history_{uuid.uuid4().hex[:8]}"
         self._cancel_evt = register_search_cancel(self._search_cancel_token)
 
-        # 一键检索：自动保存到 output 目录
+        # 用户选择保存路径
+        from tkinter import filedialog
         task = get_task(self.current_task_id)
         task_name = task["name"] if task else "unknown"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
-        os.makedirs(output_dir, exist_ok=True)
-        file_path = os.path.join(output_dir, f"{task_name}_{timestamp}.doc")
+        default_name = f"{task_name}_{timestamp}.doc"
+        file_path = filedialog.asksaveasfilename(
+            title="保存检索报告",
+            initialfile=default_name,
+            defaultextension=".doc",
+            filetypes=[("Word 文档", "*.doc"), ("文本文档", "*.txt"), ("Markdown", "*.md"), ("所有文件", "*.*")],
+        )
+        if not file_path:
+            cancel_search(self._search_cancel_token)
+            unregister_search_cancel(self._search_cancel_token)
+            return
 
         self._executing = True
         self._history_running = True
