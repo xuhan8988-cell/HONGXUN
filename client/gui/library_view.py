@@ -310,7 +310,6 @@ class LibraryView(ttk.Frame):
 
         self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self._tree.bind("<Double-1>", self._on_tree_double)
-        self._tree.bind("<ButtonRelease-1>", self._on_tree_click)
         self._tree.bind("<Key-space>", self._toggle_quicklook)
         self._tree.bind("<Escape>", lambda e: self._hide_ql())
 
@@ -431,9 +430,7 @@ class LibraryView(ttk.Frame):
         return papers
 
     def _on_tree_select(self, event):
-        pass
-
-    def _on_tree_click(self, event):
+        """单击选择条目，更新元数据和 QuickLook。"""
         sel = self._tree.selection()
         if not sel:
             self._meta_card.clear()
@@ -443,12 +440,15 @@ class LibraryView(ttk.Frame):
         p = self._paper_map.get(iid)
         if not p:
             return
+        # 元数据
         self._meta_card.show(p)
-
+        # QuickLook
         idx = next((i for i, pp in enumerate(self._papers) if pp.get("id") == p.get("id")), 0)
         if not self._ql_panel._visible:
             self._pane.insert(self._ql_panel, 1, weight=2)
         self._ql_panel.show(p, self._papers, idx)
+
+    _on_tree_click = None  # unused, remove from bindings
 
     def _on_tree_double(self, event):
         sel = self._tree.selection()
@@ -456,8 +456,67 @@ class LibraryView(ttk.Frame):
             return
         iid = sel[0]
         p = self._paper_map.get(iid)
-        if p and hasattr(self.master, 'master') and hasattr(self.master.master, '_show_abstract_popup'):
-            self.master.master._show_abstract_popup(p["id"])
+        if not p:
+            return
+        self._show_paper_popup(p)
+
+    def _show_paper_popup(self, paper):
+        """双击弹出论文详情窗口。"""
+        win = tk.Toplevel(self.master)
+        win.title(paper.get("title", "")[:60])
+        win.configure(bg=COLORS["bg_page"])
+        win.transient(self.master)
+        win.geometry("600x500")
+        win.resizable(True, True)
+
+        frame = tk.Frame(win, bg=COLORS["bg_page"])
+        frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+
+        # 标题
+        tk.Label(frame, text=paper.get("title", ""), font=FONT_TITLE,
+                 fg=COLORS["text_title"], bg=COLORS["bg_page"],
+                 anchor=tk.W, wraplength=540, justify=tk.LEFT).pack(fill=tk.X)
+
+        # 作者
+        authors = paper.get("authors", "") or ""
+        if authors:
+            tk.Label(frame, text=authors, font=FONT_BODY,
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_page"],
+                     anchor=tk.W, wraplength=540).pack(fill=tk.X, pady=(4, 0))
+
+        # 期刊 + DOI
+        meta = []
+        j = paper.get("container_title", "")
+        if j:
+            meta.append(j)
+        d = paper.get("doi", "")
+        if d:
+            meta.append(f"DOI: {d}")
+        if meta:
+            tk.Label(frame, text=" | ".join(meta), font=FONT_CAPTION,
+                     fg=COLORS["text_hint"], bg=COLORS["bg_page"],
+                     anchor=tk.W).pack(fill=tk.X, pady=(4, 8))
+
+        # 分隔线
+        tk.Frame(frame, bg=COLORS["border_light"], height=1).pack(fill=tk.X)
+
+        # 摘要
+        abstract = paper.get("abstract", "") or "暂无摘要"
+        text_w = tk.Text(frame, wrap=tk.WORD, font=FONT_BODY,
+                         fg=COLORS["text_body"], bg=COLORS["bg_input"],
+                         borderwidth=0, highlightthickness=0,
+                         padx=12, pady=8)
+        text_w.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        text_w.insert("1.0", abstract)
+        text_w.configure(state=tk.DISABLED)
+
+        scroll = ttk.Scrollbar(text_w, orient=tk.VERTICAL, command=text_w.yview)
+        text_w.configure(yscrollcommand=scroll.set)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 关闭快捷键
+        win.bind("<Escape>", lambda e: win.destroy())
+        win.focus_set()
 
     def _toggle_quicklook(self, event=None):
         if not self._papers:
