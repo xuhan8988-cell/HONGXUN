@@ -22,7 +22,7 @@ if getattr(sys, 'frozen', False):
     _EXE_DIR = os.path.dirname(sys.executable)
     _BASE_DIR = os.path.join(_EXE_DIR, "_data")
 else:
-    _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(_BASE_DIR, "data")
 PID_FILE = os.path.join(DATA_DIR, "scheduler.pid")
 STOP_FILE = os.path.join(DATA_DIR, "scheduler_stop.flag")

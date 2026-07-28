@@ -24,23 +24,56 @@ from .search import search_papers
 from .abstract import enrich_abstract
 from .email_sender import send_email
 
-# 全局取消标志（用于中止正在执行的检索任务）
-_search_cancel_flag = threading.Event()
+# 全局取消标志系统（支持多 token，各调用方独立取消）
+_search_cancel_flags: dict[str, threading.Event] = {}
+_cancel_flags_lock = threading.Lock()
 
 
+def register_search_cancel(token: str) -> threading.Event:
+    """注册一个取消 token，返回对应的 Event。调用方结束后必须 unregister。"""
+    evt = threading.Event()
+    with _cancel_flags_lock:
+        _search_cancel_flags[token] = evt
+    return evt
+
+
+def unregister_search_cancel(token: str):
+    """注销取消 token。"""
+    with _cancel_flags_lock:
+        _search_cancel_flags.pop(token, None)
+
+
+def cancel_search(token: str):
+    """按 token 取消指定检索。"""
+    with _cancel_flags_lock:
+        evt = _search_cancel_flags.get(token)
+    if evt:
+        evt.set()
+
+
+def is_search_cancelled(token: str = None) -> bool:
+    """检查是否有取消请求。指定 token 只检查该 token，否则检查全部。"""
+    with _cancel_flags_lock:
+        if token:
+            evt = _search_cancel_flags.get(token)
+            return evt.is_set() if evt else False
+        return any(e.is_set() for e in _search_cancel_flags.values())
+
+
+# 向后兼容的旧 API（操作 "default" token）
 def cancel_current_search():
-    """设置取消标志，通知正在执行的检索任务停止"""
-    _search_cancel_flag.set()
+    cancel_search("default")
 
 
 def reset_search_cancel():
-    """清除取消标志"""
-    _search_cancel_flag.clear()
+    with _cancel_flags_lock:
+        evt = _search_cancel_flags.get("default")
+    if evt:
+        evt.clear()
 
 
-def is_search_cancelled() -> bool:
-    """检查是否有取消请求"""
-    return _search_cancel_flag.is_set()
+def is_search_cancelled_default() -> bool:
+    return is_search_cancelled("default")
 
 
 # ── macOS 防休眠（使用 caffeinate） ─────────────────────────
@@ -343,7 +376,9 @@ def build_report(papers, task_data, file_path: str, title_prefix="", progress_ca
 
 # ── 历史检索 → 文件 ───────────────────────────────────────
 
-def run_history_search(task_id: str, task_data: dict, file_path: str, progress_callback=None) -> str:
+def run_history_search(task_id: str, task_data: dict, file_path: str,
+                       progress_callback=None,
+                       cancel_token: str = None) -> str:
     """执行历史论文检索（CrossRef + 知网），保存为用户指定的文件，返回文件路径。
 
     关键词过滤顺序：
@@ -380,8 +415,9 @@ def run_history_search(task_id: str, task_data: dict, file_path: str, progress_c
 
         for mi, m_first in enumerate(months):
             # 检查取消请求
-            if is_search_cancelled():
-                reset_search_cancel()
+            _check_token = cancel_token or "default"
+            if is_search_cancelled(_check_token):
+                unregister_search_cancel(_check_token)
                 raise KeyboardInterrupt("检索已取消")
 
             # 当月最后一天
@@ -420,8 +456,9 @@ def run_history_search(task_id: str, task_data: dict, file_path: str, progress_c
         papers = enrich_abstract(papers, progress_callback)
 
         # 检查取消请求
-        if is_search_cancelled():
-            reset_search_cancel()
+        _check_token_2 = cancel_token or "default"
+        if is_search_cancelled(_check_token_2):
+            unregister_search_cancel(_check_token_2)
             raise KeyboardInterrupt("检索已取消")
 
         # 用补全后的摘要重新匹配关键词（补全前的摘要可能较短/不全，导致匹配不准）
@@ -488,9 +525,12 @@ def run_increment_check(task_id: str, task_data: dict, start_str: str = None, en
     end_str_fmt = end_dt.strftime("%Y-%m-%d")
 
     # 每日推送——仅按期刊检索，不传 keywords，获取期刊所有论文
+    # 使用 from-index-date（CrossRef 收录日期，精确到日）而非 from-pub-date
+    #（仅到月），确保每次能准确获取 24h 窗口内的新论文
     papers = search_papers(
         task_data["journals"],
         start_str_fmt, end_str_fmt,
+        date_filter="index",
     )
 
     # 补全摘要，不按关键词过滤，所有论文均保留

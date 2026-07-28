@@ -7,7 +7,10 @@
 
 import re
 import html
+import threading
 from .session import _session
+
+_enrich_lock = threading.Lock()
 
 
 def _clean_abstract(text: str) -> str:
@@ -357,42 +360,45 @@ def enrich_abstract(papers: list[dict], progress_callback=None) -> list[dict]:
         return papers
     total = len(need_enrich)
 
-    import concurrent.futures as cf
+    # 全局锁：同一时刻只允许一个调用方执行并行 HTTP 摘要补全，
+    # 避免历史检索和每日推送同时调用时 API 限速/连接池争抢
+    with _enrich_lock:
+        import concurrent.futures as cf
 
-    # 仅保留三轮：①OpenAlex ②Semantic Scholar(DOI) ⑥Tavily 搜索引擎
-    def _process_one(i_p):
-        i, p = i_p
-        if progress_callback:
-            progress_callback(0.20 + (i / total) * 0.35, f"摘要补全 ({i+1}/{total})")
-        doi = p.get("doi", "")
-        title = p.get("title", "")
+        # 仅保留三轮：①OpenAlex ②Semantic Scholar(DOI) ⑥Tavily 搜索引擎
+        def _process_one(i_p):
+            i, p = i_p
+            if progress_callback:
+                progress_callback(0.20 + (i / total) * 0.35, f"摘要补全 ({i+1}/{total})")
+            doi = p.get("doi", "")
+            title = p.get("title", "")
 
-        # 第1+2轮：OpenAlex 与 Semantic Scholar（DOI）并行
-        if doi:
-            with cf.ThreadPoolExecutor(max_workers=2) as ex:
-                fut_oa = ex.submit(_fetch_openalex, p, doi)
-                fut_ss = ex.submit(_fetch_ss_by_doi, p, doi)
-                for f in (fut_oa, fut_ss):
-                    try:
-                        f.result(timeout=12)
-                    except Exception:
-                        pass
+            # 第1+2轮：OpenAlex 与 Semantic Scholar（DOI）并行
+            if doi:
+                with cf.ThreadPoolExecutor(max_workers=2) as ex:
+                    fut_oa = ex.submit(_fetch_openalex, p, doi)
+                    fut_ss = ex.submit(_fetch_ss_by_doi, p, doi)
+                    for f in (fut_oa, fut_ss):
+                        try:
+                            f.result(timeout=12)
+                        except Exception:
+                            pass
 
-        # 第6轮：Tavily 搜索引擎（前两轮失败时兜底）
-        if not p.get("abstract") or p.get("abstract") in ("无摘要", ""):
-            try:
-                ab = _search_abstract_from_web(title, doi)
-                if ab:
-                    p["abstract"] = ab
-            except Exception:
-                pass
-        return p
+            # 第6轮：Tavily 搜索引擎（前两轮失败时兜底）
+            if not p.get("abstract") or p.get("abstract") in ("无摘要", ""):
+                try:
+                    ab = _search_abstract_from_web(title, doi)
+                    if ab:
+                        p["abstract"] = ab
+                except Exception:
+                    pass
+            return p
 
-    # 并行处理所有论文（限制并发数以防止过度资源竞争）
-    # 同时限制整体摘要补全阶段的最大超时时间
-    max_workers = min(4, len(need_enrich))  # 从8降到4，减少并发资源竞争
-    with cf.ThreadPoolExecutor(max_workers=max_workers) as ex:
-        list(ex.map(_process_one, enumerate(need_enrich)))
+        # 并行处理所有论文（限制并发数以防止过度资源竞争）
+        max_workers = min(4, len(need_enrich))
+        with cf.ThreadPoolExecutor(max_workers=max_workers) as ex:
+            list(ex.map(_process_one, enumerate(need_enrich)))
+    # ========== 锁外：纯 CPU 清理 ==========
 
     # 注意：need_enrich 中的 dict 与 papers 中的 dict 是同一对象，
     # 修改 need_enrich[i] 即修改了 papers 中对应论文，无需重新指派。

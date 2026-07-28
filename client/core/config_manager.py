@@ -39,7 +39,6 @@ for d in [DATA_DIR, OUTPUT_DIR, UNSENT_DIR]:
 # 正则规则
 EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 DATE_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')
-CHINESE_PUNCTUATION_PATTERN = re.compile(r'[　-〿＀-￯‘’“”…《》「」【】、，；：！？]')
 MIN_DATE = datetime(1949, 10, 1)
 MAX_DATE = datetime(2100, 10, 1)
 
@@ -60,6 +59,23 @@ def _save_json(file_path, data):
 
 
 # -------------------- 输入校验 --------------------
+def _split_items(text: str) -> list[str]:
+    """将输入按多种分隔符分割，返回去空后的项目列表。
+
+    支持的分隔符：
+      - 英文分号 ;
+      - 中文分号 ；
+      - 英文逗号 ,
+      - 中文逗号 ，
+      - 中文顿号 、
+    """
+    normalized = text
+    for sep in ['；', '，', '、', ',']:
+        normalized = normalized.replace(sep, ';')
+    items = [item.strip() for item in normalized.split(';') if item.strip()]
+    return items
+
+
 def validate_journals(journal_str: str) -> tuple[list[str], list[str]]:
     """校验期刊名称输入，返回(合法列表, 错误信息列表)"""
     errors = []
@@ -67,17 +83,13 @@ def validate_journals(journal_str: str) -> tuple[list[str], list[str]]:
         errors.append("期刊输入框不能为空")
         return [], errors
 
-    # 先统一将中文分号替换为英文分号，再分割
-    normalized = journal_str.replace('；', ';')
-    items = [item.strip() for item in normalized.split(';') if item.strip()]
+    items = _split_items(journal_str)
     if len(items) > 10:
         errors.append(f"期刊数量不能超过10个，当前输入{len(items)}个")
 
     valid = []
     for idx, item in enumerate(items, 1):
-        if CHINESE_PUNCTUATION_PATTERN.search(item):
-            errors.append(f"期刊输入框第{idx}项「{item}」包含多余的中文标点符号（请使用英文分号;分隔）")
-        elif len(item) < 1:
+        if len(item) < 1:
             errors.append(f"期刊输入框第{idx}项内容为空")
         else:
             valid.append(item)
@@ -91,17 +103,13 @@ def validate_keywords(keyword_str: str) -> tuple[list[str], list[str]]:
         errors.append("关键词输入框不能为空")
         return [], errors
 
-    # 先统一将中文分号替换为英文分号，再分割
-    normalized = keyword_str.replace('；', ';')
-    items = [item.strip() for item in normalized.split(';') if item.strip()]
+    items = _split_items(keyword_str)
     if len(items) > 10:
         errors.append(f"关键词数量不能超过10个，当前输入{len(items)}个")
 
     valid = []
     for idx, item in enumerate(items, 1):
-        if CHINESE_PUNCTUATION_PATTERN.search(item):
-            errors.append(f"关键词输入框第{idx}项「{item}」包含多余的中文标点符号（请使用英文分号;分隔）")
-        elif len(item) < 1:
+        if len(item) < 1:
             errors.append(f"关键词输入框第{idx}项内容为空")
         else:
             valid.append(item)
@@ -114,17 +122,13 @@ def validate_keywords2(keyword_str: str) -> tuple[list[str], list[str]]:
     if not keyword_str.strip():
         return [], errors  # 为空合法
 
-    # 先统一将中文分号替换为英文分号，再分割
-    normalized = keyword_str.replace('；', ';')
-    items = [item.strip() for item in normalized.split(';') if item.strip()]
+    items = _split_items(keyword_str)
     if len(items) > 2:
         errors.append(f"关键词(选填)数量不能超过2个，当前输入{len(items)}个")
 
     valid = []
     for idx, item in enumerate(items, 1):
-        if CHINESE_PUNCTUATION_PATTERN.search(item):
-            errors.append(f"关键词(选填)第{idx}项「{item}」包含多余的中文标点符号（请使用英文分号;分隔）")
-        elif len(item) < 1:
+        if len(item) < 1:
             errors.append(f"关键词(选填)第{idx}项内容为空")
         else:
             valid.append(item)

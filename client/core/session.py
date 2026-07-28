@@ -19,3 +19,8 @@ for _key in ('http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY'):
 _session = requests.Session()
 _session.headers.update({"User-Agent": "HONGXUN/1.0 (academic-research-tool)"})
 _session.trust_env = False
+
+# 第二个 Session 池——用于每日推送的 CrossRef 检索，与历史检索独立连接池
+_session_bulk = requests.Session()
+_session_bulk.headers.update({"User-Agent": "HONGXUN/1.0 (academic-research-tool)"})
+_session_bulk.trust_env = False

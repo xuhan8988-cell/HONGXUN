@@ -70,6 +70,7 @@ from core import (
     validate_receivers,
     run_history_search, run_increment_check, send_combined_email, add_push_record,
     cancel_current_search, reset_search_cancel, is_search_cancelled,
+    register_search_cancel, unregister_search_cancel, cancel_search,
     search, abstract,
     coupon_manager,
     code_protector,
@@ -123,6 +124,11 @@ class PaperMonitorApp:
         self._resize_timer = None
         self._last_scale = 1.0
         self._activation_cache = None  # 会话级激活缓存
+
+        # 进度条主人制（允许 "history" / "startup_mail" / None）
+        self._progress_owner: str | None = None
+        self._progress_lock = threading.Lock()
+        self._deferred_progress: list[tuple[float, str]] = []
 
         init_fonts()
         _apply_styles()
@@ -885,7 +891,7 @@ class PaperMonitorApp:
                  ).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=8)
 
         self._version_label = tk.Label(inner_sf,
-                                        text="郑州大学 v1.0.0",
+                                        text=f"郑州大学 v{APP_VERSION}",
                                         font=FONT_CAPTION,
                                         fg=COLORS["text_hint"],
                                         bg=COLORS["sidebar_bg"])
@@ -1046,9 +1052,11 @@ class PaperMonitorApp:
         if self._history_running:
             messagebox.showinfo("提示", "历史检索正在执行中，请等待完成")
             return
-        if self._scheduler_daemon_running:
-            messagebox.showwarning("提示", "每日推送正在运行中，请先关闭后再执行历史检索")
-            return
+
+        # 生成唯一取消 token，隔离于每日推送的取消信号
+        import uuid
+        self._search_cancel_token = f"history_{uuid.uuid4().hex[:8]}"
+        self._cancel_evt = register_search_cancel(self._search_cancel_token)
 
         # 一键检索：自动保存到 output 目录
         task = get_task(self.current_task_id)
@@ -1060,6 +1068,7 @@ class PaperMonitorApp:
 
         self._executing = True
         self._history_running = True
+        self._progress_owner = "history"
         # 侧栏标记运行状态
         self.sidebar.set_task_running(self.current_task_id)
         self.progress_var.set(0.0)
@@ -1085,7 +1094,8 @@ class PaperMonitorApp:
         def worker():
             try:
                 result = run_history_search(self.current_task_id, task, file_path,
-                                            progress_callback=_progress)
+                                            progress_callback=_progress,
+                                            cancel_token=self._search_cancel_token)
                 if isinstance(result, tuple):
                     fp, papers = result
                     # 自动入库到文献书架
@@ -1107,7 +1117,13 @@ class PaperMonitorApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_progress(self, ratio, message):
+    def _update_progress(self, ratio, message, owner=None):
+        """更新进度条，支持主人制避免冲突。"""
+        # 如果其他操作拥有进度条，缓存在队列中
+        if owner and self._progress_owner is not None and self._progress_owner != owner:
+            with self._progress_lock:
+                self._deferred_progress.append((ratio, message))
+            return
         pct = int(ratio * 100)
         self.progress_var.set(ratio)
         # 从消息中提取 "（当前/总数）" 或 "(当前/总数)"，突出显示
@@ -1119,10 +1135,34 @@ class PaperMonitorApp:
         else:
             self.progress_label_var.set(f"{pct}% {message}")
 
+    def _release_progress(self, owner):
+        """释放进度条主人权，转交缓存进度给另一方。"""
+        if self._progress_owner != owner:
+            return
+        self._progress_owner = None
+        with self._progress_lock:
+            deferred = self._deferred_progress[:]
+            self._deferred_progress.clear()
+        # 如果有缓存进度且另一方还在运行，自动转交
+        if deferred:
+            other_owner = "startup_mail" if owner == "history" else "history"
+            other_running = (other_owner == "history" and self._history_running) or \
+                            (other_owner == "startup_mail" and self._scheduler_daemon_running)
+            if other_running:
+                self._progress_owner = other_owner
+                for r, msg in deferred:
+                    self._update_progress(r, msg, owner=other_owner)
+
     def _on_history_done(self, file_path):
         self._executing = False
         self._history_running = False
         self.sidebar.clear_task_running()
+        self._release_progress("history")
+        # 注销取消 token
+        try:
+            unregister_search_cancel(self._search_cancel_token)
+        except Exception:
+            pass
         self._progress_frame.pack_forget()
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
         self._cancel_search_btn.pack_forget()
@@ -1224,6 +1264,11 @@ class PaperMonitorApp:
         self._executing = False
         self._history_running = False
         self.sidebar.clear_task_running()
+        self._release_progress("history")
+        try:
+            unregister_search_cancel(self._search_cancel_token)
+        except Exception:
+            pass
         self._progress_frame.pack_forget()
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
         self._cancel_search_btn.pack_forget()
@@ -1233,6 +1278,11 @@ class PaperMonitorApp:
         self._executing = False
         self._history_running = False
         self.sidebar.clear_task_running()
+        self._release_progress("history")
+        try:
+            unregister_search_cancel(self._search_cancel_token)
+        except Exception:
+            pass
         self._progress_frame.pack_forget()
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
         self._cancel_search_btn.pack_forget()
@@ -1246,7 +1296,8 @@ class PaperMonitorApp:
         ret = messagebox.askyesno("确认取消", "确定要取消当前检索吗？\n已完成的进度不会保存。")
         if ret:
             self.status_var.set("正在取消检索...")
-            cancel_current_search()
+            if hasattr(self, '_search_cancel_token'):
+                cancel_search(self._search_cancel_token)
 
     def _is_daemon_alive(self) -> bool:
         """检查调度守护进程是否仍在运行"""
@@ -1464,6 +1515,7 @@ class PaperMonitorApp:
 
         task_names = [t["name"] for t in enabled_tasks.values()]
         self.status_var.set(f"每日推送启动：正在检索 {len(enabled_tasks)} 个任务近一周数据...")
+        self._progress_owner = "startup_mail"
         self.progress_var.set(0.0)
         self.progress_label_var.set("0% 近一周检索中...")
         self._progress_idle.pack_forget()
@@ -1471,7 +1523,7 @@ class PaperMonitorApp:
         self.root.update_idletasks()
 
         def _progress(ratio, message):
-            self.root.after(0, lambda: self._update_progress(ratio, message))
+            self.root.after(0, lambda: self._update_progress(ratio, message, owner="startup_mail"))
 
         def worker():
             try:
@@ -1521,6 +1573,7 @@ class PaperMonitorApp:
                         email_ok = False
 
                     def _show_complete():
+                        self._release_progress("startup_mail")
                         self._progress_frame.pack_forget()
                         detail_str = "；".join(task_details) if task_details else "无"
                         if email_ok:
@@ -1579,6 +1632,7 @@ class PaperMonitorApp:
                     self.root.after(0, _show_complete)
                 else:
                     def _show_no_result():
+                        self._release_progress("startup_mail")
                         self._progress_frame.pack_forget()
                         no_new = "所有任务均无新增论文" if not failed_tasks else \
                                  f"有{'，'.join(failed_tasks)}个任务检索失败"

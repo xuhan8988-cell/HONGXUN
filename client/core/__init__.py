@@ -38,7 +38,7 @@ from .config_manager import (
 )
 
 # 检索引擎（编排层）
-from .engine import run_history_search, run_increment_check, send_combined_email, cancel_current_search, reset_search_cancel, is_search_cancelled
+from .engine import run_history_search, run_increment_check, send_combined_email, cancel_current_search, reset_search_cancel, is_search_cancelled, register_search_cancel, unregister_search_cancel, cancel_search
 
 # 礼品券 & 许可管理
 from . import coupon_manager

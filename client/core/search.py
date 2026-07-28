@@ -8,7 +8,7 @@
 import re
 from datetime import datetime, timedelta
 from calendar import monthrange
-from .session import _session
+from .session import _session, _session_bulk
 from .abstract import _clean_abstract
 
 
@@ -182,8 +182,11 @@ def calc_max_per_journal(journal_names: list[str],
 
 
 def resolve_journal_to_issn(journal_name: str, base_url: str,
-                            works_url: str = None) -> list[str]:
+                            works_url: str = None,
+                            session=None) -> list[str]:
     """通过CrossRef期刊API将期刊名称解析为ISSN列表（精确匹配优先）"""
+    if session is None:
+        session = _session
 
     COMMON_JOURNALS = {
         "science": ["0036-8075", "1095-9203"],
@@ -203,7 +206,7 @@ def resolve_journal_to_issn(journal_name: str, base_url: str,
 
     params = {"query": journal_name, "rows": 15}
     try:
-        resp = _session.get(base_url, params=params, timeout=15)
+        resp = session.get(base_url, params=params, timeout=15)
         resp.raise_for_status()
         items = resp.json().get("message", {}).get("items", [])
 
@@ -251,7 +254,7 @@ def resolve_journal_to_issn(journal_name: str, base_url: str,
 
     if works_url:
         try:
-            resp = _session.get(works_url, params={
+            resp = session.get(works_url, params={
                 "query.container-title": journal_name,
                 "rows": 1,
                 "filter": "from-pub-date:2020-01-01,until-pub-date:2026-12-31"
@@ -272,11 +275,14 @@ def resolve_journal_to_issn(journal_name: str, base_url: str,
 def _fetch_papers_paginated(url: str, params_base: dict,
                             source_label: str,
                             seen_dois: set, max_needed: int,
-                            progress_callback=None) -> list[dict]:
+                            progress_callback=None,
+                            session=None) -> list[dict]:
     """
     使用 CrossRef cursor 深度分页检索，取够 max_needed 篇或者直到 API 没有下一页。
     检索阶段不按关键词过滤，所有论文先获取，待 engine.py 摘要补全后统一匹配。
     """
+    if session is None:
+        session = _session
     all_papers = []
     cursor = "*"
     raw_total = 0
@@ -289,7 +295,7 @@ def _fetch_papers_paginated(url: str, params_base: dict,
 
         params = {**params_base, "cursor": cursor}
         try:
-            resp = _session.get(url, params=params, timeout=30)
+            resp = session.get(url, params=params, timeout=30)
             resp.raise_for_status()
             data = resp.json()
             msg = data.get("message", {})
@@ -356,15 +362,18 @@ def _fetch_papers_paginated(url: str, params_base: dict,
 
 def _fetch_papers(url: str, params: dict,
                   source_label: str,
-                  seen_dois: set = None) -> list[dict]:
+                  seen_dois: set = None,
+                  session=None) -> list[dict]:
     if seen_dois is None:
         seen_dois = set()
     """执行CrossRef检索并提取论文信息，单页查询（ISSN 未匹配时的备用路径）"""
     papers = []
     if seen_dois is None:
         seen_dois = set()
+    if session is None:
+        session = _session
     try:
-        resp = _session.get(url, params=params, timeout=30)
+        resp = session.get(url, params=params, timeout=30)
         resp.raise_for_status()
         items = resp.json().get("message", {}).get("items", [])
 
@@ -420,11 +429,15 @@ def _fetch_papers(url: str, params: dict,
 
 def search_papers(journal_names: list[str], start_date: str, end_date: str,
                   keywords: list[str] = None,
-                  progress_callback=None) -> list[dict]:
+                  progress_callback=None,
+                  date_filter: str = "pub") -> list[dict]:
     """
     按期刊名称、时间范围检索论文，返回标准化论文列表。
     当 keywords 为 None 或空时，不关键词过滤，返回期刊所有论文。
     使用 CrossRef cursor 深度分页突破 1000 条限制，直到取够所需条数。
+
+    date_filter: "pub" 用 from-pub-date（按出版日期，仅到月）
+                 "index" 用 from-index-date（按收录日期，精确到日，适合增量检查）
     """
     works_url = "https://api.crossref.org/works"
     journals_url = "https://api.crossref.org/journals"
@@ -432,15 +445,19 @@ def search_papers(journal_names: list[str], start_date: str, end_date: str,
     seen_dois = set()
     max_needed = calc_max_per_journal(journal_names, start_date, end_date, progress_callback)
 
+    # 每日推送用独立 Session 池，避免与历史检索争抢连接
+    _http = _session_bulk if date_filter == "index" else _session
     query_str = " ".join(keywords) if keywords else ""
 
     for journal_name in journal_names:
-        issns = resolve_journal_to_issn(journal_name, journals_url, works_url)
+        issns = resolve_journal_to_issn(journal_name, journals_url, works_url, session=_http)
 
         if issns:
             for issn in issns:
+                _date_key = "from-index-date" if date_filter == "index" else "from-pub-date"
                 params_base = {
-                    "filter": f"issn:{issn},from-pub-date:{start_date},until-pub-date:{end_date}",
+                    "filter": f"issn:{issn},{_date_key}:{start_date},until-index-date:{end_date}" if date_filter == "index"
+                              else f"issn:{issn},{_date_key}:{start_date},until-pub-date:{end_date}",
                     "rows": 1000,
                     "sort": "published",
                     "order": "desc",
@@ -449,13 +466,15 @@ def search_papers(journal_names: list[str], start_date: str, end_date: str,
                     params_base["query"] = query_str
                 papers = _fetch_papers_paginated(
                     works_url, params_base, f"{journal_name}[{issn}]", seen_dois, max_needed,
-                    progress_callback,
+                    progress_callback, session=_http,
                 )
                 all_papers.extend(papers)
         else:
             # 模糊匹配：不使用分页，单页查询即可
+            _date_key_fuzzy = "from-index-date" if date_filter == "index" else "from-pub-date"
             params = {
-                "filter": f"from-pub-date:{start_date},until-pub-date:{end_date}",
+                "filter": f"{_date_key_fuzzy}:{start_date},until-index-date:{end_date}" if date_filter == "index"
+                          else f"from-pub-date:{start_date},until-pub-date:{end_date}",
                 "rows": 1000,
                 "sort": "relevance",
                 "order": "desc",
@@ -464,7 +483,7 @@ def search_papers(journal_names: list[str], start_date: str, end_date: str,
                 params["query"] = query_str
             params["query.container-title"] = journal_name
             papers = _fetch_papers(works_url, params,
-                                   f"{journal_name}(fuzzy)", seen_dois)
+                                   f"{journal_name}(fuzzy)", seen_dois, session=_http)
             for p in papers:
                 ct = p.get("container_title", "").lower()
                 jn = journal_name.lower()
