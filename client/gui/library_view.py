@@ -10,10 +10,13 @@ from tkinter import ttk, messagebox
 from gui.theme import COLORS, ICONS, FONT_BODY, FONT_BODY_BOLD, FONT_HEADING, FONT_TITLE, FONT_CAPTION, FONT_LABEL
 from gui.widgets import RoundedCard, StatusPill, IconLabel, IconCache, EmptyState, SkeletonLoader
 from core.library import (
-    query_papers, get_paper, get_stats, get_all_task_names,
+    get_paper, get_stats, get_all_task_names,
     update_paper_status, batch_update_status,
     export_ris,
+    load_library,
 )
+
+_BATCH_SIZE = 20  # 每批创建的卡片数
 
 STATUS_MAP = {"全部": None, "待读": "pending", "已读": "read", "排除": "excluded"}
 STATUS_ICON = {"pending": "○", "read": "●", "excluded": "✕"}
@@ -512,7 +515,33 @@ class LibraryView(ttk.Frame):
     def refresh(self):
         self._refresh()
 
+    def _refresh_lazy(self, batch_start=0):
+        """分批加载卡片，避免 UI 线程长时间阻塞。"""
+        batch = self._papers[batch_start:batch_start + _BATCH_SIZE]
+        for paper in batch:
+            card = PaperCard(self._list_inner, paper,
+                             on_click=self._on_card_click,
+                             on_ctrl_click=self._on_card_ctrl_click,
+                             on_shift_click=self._on_card_shift_click,
+                             on_double_click=self._on_card_double_click)
+            card.pack(fill=tk.X, padx=4, pady=(0, 2))
+            self._card_widgets.append(card)
+
+        next_start = batch_start + _BATCH_SIZE
+        if next_start < len(self._papers):
+            # 下一批用 after 调度，让 UI 来得及刷新
+            self.after(10, lambda: self._refresh_lazy(next_start))
+        else:
+            # 最后一批完成，更新统计
+            stats = get_stats()
+            self._main_stats_var.set(
+                f"总计: {stats['total']}  待读: {stats['pending']}  已读: {stats['read']}  排除: {stats['excluded']}")
+            self._stats_var.set(f"总计: {len(self._papers)} 篇")
+
     def _refresh(self):
+        # 缓存 library 数据，避免反复读取 JSON
+        self._lib_cache = load_library()
+
         # Update task names
         task_names = get_all_task_names()
         current_task_val = self._task_var.get()
@@ -525,7 +554,16 @@ class LibraryView(ttk.Frame):
         task_filter = self._task_var.get()
         task_filter = None if task_filter == "全部" else task_filter
 
-        self._papers = query_papers(status=status, search_text=search_text, task_name=task_filter)
+        # 在内存中过滤，不重复读 JSON
+        all_papers = self._lib_cache.get("papers", [])
+        if status:
+            all_papers = [p for p in all_papers if p.get("status") == status]
+        if search_text:
+            q = search_text.lower()
+            all_papers = [p for p in all_papers if q in p.get("title", "").lower()]
+        if task_filter:
+            all_papers = [p for p in all_papers if p.get("task_name") == task_filter]
+        self._papers = all_papers
 
         # Toggle empty state
         if not self._papers:
@@ -540,27 +578,15 @@ class LibraryView(ttk.Frame):
         self._empty_state.grid_remove()
         self._list_inner.pack(fill=tk.BOTH, expand=True)
 
-        # Rebuild cards
+        # Destroy old cards
         for w in self._list_inner.winfo_children():
             w.destroy()
         self._card_widgets = []
         self._selected_ids = set()
         self._last_clicked_card = None
 
-        for paper in self._papers:
-            card = PaperCard(self._list_inner, paper,
-                             on_click=self._on_card_click,
-                             on_ctrl_click=self._on_card_ctrl_click,
-                             on_shift_click=self._on_card_shift_click,
-                             on_double_click=self._on_card_double_click)
-            card.pack(fill=tk.X, padx=4, pady=(0, 2))
-            self._card_widgets.append(card)
-
-        # Update stats
-        stats = get_stats()
-        self._main_stats_var.set(
-            f"总计: {stats['total']}  待读: {stats['pending']}  已读: {stats['read']}  排除: {stats['excluded']}")
-        self._stats_var.set(f"总计: {len(self._papers)} 篇")
+        # 分批懒加载（每批 20 张，用 after 让 UI 呼吸）
+        self._refresh_lazy(0)
 
     def _on_card_click(self, card):
         self._clear_selection()
