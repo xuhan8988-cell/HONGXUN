@@ -76,13 +76,16 @@ from core import (
     code_protector,
     auto_updater,
 )
+from core.journal_store import JournalStore
 from gui.widgets import (
-    PlaceholderEntry, CollapsibleFrame, ToggleSwitch,
+    ModernEntry, PlaceholderEntry, CollapsibleFrame, ToggleSwitch,
     RoundedCard, ModernButton, StatusPill, IconLabel,
-    IconCache, SkeletonLoader, EmptyState,
+    IconCache, SkeletonLoader, EmptyState, attach_focus_ring,
+    ModernScrollbar,
 )
 from gui.sidebar import TaskSidebar
 from gui.library_view import LibraryView
+from gui.dashboard import DashboardView
 IconCache.init(ICON_DIR)
 
 # 开机自启管理（scheduler_daemon 与 gui_app.py 同级）
@@ -101,10 +104,25 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 # ======================================================================
 # 主应用
 # ======================================================================
+
+def _simple_card(master):
+    """普通白底圆角边框卡片，替代 RoundedCard（规避其 fit_content 布局 bug）。
+
+    RoundedCard(fit_content=True) 用 canvas.create_window 固定 content 尺寸，
+    导致内部 pack 子组件塌缩成 1x1（设置/监控页内容不可见的根源）。
+    这里用普通 Frame + 细边框实现同等外观，content 正常 pack 布局。
+    """
+    card = tk.Frame(master, bg=COLORS["bg_card"], highlightthickness=1,
+                    highlightbackground=COLORS["border"])
+    card.content = tk.Frame(card, bg=COLORS["bg_card"])
+    card.content.pack(fill=tk.BOTH, expand=True)
+    return card
+
+
 class PaperMonitorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("鸿讯 · 论文监控工具（郑州大学定制版）")
+        self.root.title("鸿讯 · 论文监控工具")
         self.root.geometry("1080x720")
         self.root.minsize(900, 640)
         self.root.configure(bg=COLORS["bg_page"])
@@ -203,6 +221,10 @@ class PaperMonitorApp:
                 self.root.after(2200, self._check_first_run_wizard)
                 self.root.after(5000, self._check_update_auto)
                 self.root.after(10000, self._poll_daemon_result)
+                # LLM API 可用性检测（异步，不阻塞启动）
+                self.root.after(3500, self._check_llm_api_on_startup)
+                # 订阅/礼品券到期检测（自动关停受限功能）
+                self.root.after(2500, self._check_expiry_on_startup)
             except Exception:
                 # 防止构建 UI 异常导致启动页永远不关闭
                 import traceback
@@ -238,7 +260,7 @@ class PaperMonitorApp:
         logo_text.pack(pady=(60, 20))
         self._splash_logo_label = logo_text
 
-        tk.Label(self.splash, text="科研论文助手（郑州大学定制版）",
+        tk.Label(self.splash, text="科研论文助手",
                  font=FONT_TITLE,
                  fg=COLORS["text_title"],
                  bg=COLORS["bg_page"]).pack(pady=(0, 8))
@@ -364,9 +386,9 @@ class PaperMonitorApp:
         if hasattr(self, 'content_frame') and self.content_frame.winfo_exists():
             pad = max(8, min(40, int(24 * min(scale, 1.15))))
             pady = max(8, min(36, int(20 * min(scale, 1.15))))
-            if hasattr(self, 'notebook') and self.notebook.winfo_exists():
+            if hasattr(self, '_page_frame') and self._page_frame.winfo_exists():
                 try:
-                    self.notebook.master.pack_configure(padx=pad, pady=pady)
+                    self._page_frame.pack_configure(padx=pad, pady=pady)
                 except Exception:
                     pass
 
@@ -380,18 +402,18 @@ class PaperMonitorApp:
 
     # ===================== UI 构建 =====================
     def _build_ui(self):
-        # ========== 顶部工具栏 ==========
-        toolbar = tk.Frame(self.root, bg=COLORS["bg_page"], height=44)
+        # ========== 顶部品牌栏 ==========
+        toolbar = tk.Frame(self.root, bg=COLORS["bg_page"], height=56)
         toolbar.pack(fill=tk.X)
         toolbar.pack_propagate(False)
 
-        tk.Frame(toolbar, bg="#E8E8ED", height=1).pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Frame(toolbar, bg=COLORS["border_light"], height=1).pack(side=tk.BOTTOM, fill=tk.X)
 
         left_group = tk.Frame(toolbar, bg=COLORS["bg_page"])
-        left_group.pack(side=tk.LEFT, padx=(16, 0), pady=6)
+        left_group.pack(side=tk.LEFT, padx=(16, 0), pady=8)
 
-        # 标题栏小图标（28×28 缩放，完全左靠齐）
-        title_icon = self._load_scaled_icon(ICON_TITLE, 28)
+        # 标题栏小图标（32×32 缩放，完全左靠齐）
+        title_icon = self._load_scaled_icon(ICON_TITLE, 32)
         if title_icon:
             logo_label = tk.Label(left_group, image=title_icon, bg=COLORS["bg_page"])
             logo_label.image = title_icon
@@ -404,29 +426,35 @@ class PaperMonitorApp:
                                   bg=COLORS["bg_page"])
         logo_label.pack(side=tk.LEFT)
 
-        tk.Label(left_group,
+        brand_text = tk.Frame(left_group, bg=COLORS["bg_page"])
+        brand_text.pack(side=tk.LEFT, padx=(12, 0))
+        tk.Label(brand_text,
                  text="HONGXUN",
                  font=FONT_TITLE,
                  fg=COLORS["text_title"],
-                 bg=COLORS["bg_page"]).pack(side=tk.LEFT, padx=(12, 0))
+                 bg=COLORS["bg_page"]).pack(anchor=tk.W)
+        tk.Label(brand_text,
+                 text="论文监控助手",
+                 font=FONT_CAPTION,
+                 fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_page"]).pack(anchor=tk.W)
 
-        # 顶部工具栏右侧（图标按钮）
+        # 顶部工具栏右侧（文字按钮：无 tooltip，直观清晰）
         right_tool_group = tk.Frame(toolbar, bg=COLORS["bg_page"])
-        right_tool_group.pack(side=tk.RIGHT, padx=(0, 8))
+        right_tool_group.pack(side=tk.RIGHT, padx=(0, 12))
 
-        for icon_char, text, cmd in [
-            ("⬇", "更新", self._check_update_manual),
-            ("?", "说明", self._show_usage_guide),
-            ("✉", "反馈", self._open_feedback),
+        for text, cmd in [
+            ("意见反馈", self._open_feedback),
+            ("使用说明", self._show_usage_guide),
+            ("检查更新", self._check_update_manual),
         ]:
-            btn = tk.Label(right_tool_group, text=f"{icon_char} {text}",
+            btn = tk.Label(right_tool_group, text=text,
                            font=FONT_BODY, fg=COLORS["text_secondary"],
-                           bg=COLORS["bg_page"], cursor="hand2",
-                           padx=8, pady=2)
+                           bg=COLORS["bg_page"], cursor="hand2", padx=8, pady=6)
             btn.pack(side=tk.RIGHT, padx=(2, 0))
             btn.bind("<Button-1>", lambda e, c=cmd: c())
-            btn.bind("<Enter>", lambda e, b=btn: b.configure(fg=COLORS["primary"]))
-            btn.bind("<Leave>", lambda e, b=btn: b.configure(fg=COLORS["text_secondary"]))
+            btn.bind("<Enter>", lambda e, b=btn: b.configure(bg=COLORS["hover_bg"]))
+            btn.bind("<Leave>", lambda e, b=btn: b.configure(bg=COLORS["bg_page"]))
 
         # ========== 主内容区 ==========
         self.content_frame = ttk.Frame(self.root, style="TFrame")
@@ -442,53 +470,50 @@ class PaperMonitorApp:
             on_select=self._on_sidebar_select,
             on_new=self._new_task,
             on_toggle_push=self._toggle_scheduler,
+            on_nav=self._on_sidebar_nav,
+            on_task_changed=self._refresh_task_list,
+            on_delete_task=self._delete_task_from_sidebar,
             load_tasks_fn=load_all_tasks,
             get_task_fn=get_task,
             save_task_fn=save_task,
         )
         self.sidebar.pack(fill=tk.BOTH, expand=True)
 
-        # -------- 右侧内容区（ttk.Notebook 双标签） --------
+        # -------- 右侧内容区（页面栈：侧栏主导航切换，一次只显示一页） --------
         right_frame = ttk.Frame(self.content_frame, style="TFrame")
-        right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=16, pady=16)
+        right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=24, pady=24)
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(0, weight=1)
 
-        self.notebook = ttk.Notebook(right_frame)
-        self.notebook.grid(row=0, column=0, sticky=tk.NSEW)
+        self._page_frame = right_frame
+        self._pages = {}
 
-        # Notebook 标签样式（VS Code 风格底部下划线）
-        style = ttk.Style()
-        style.configure("TNotebook", background=COLORS["bg_page"], borderwidth=0)
-        style.configure("TNotebook.Tab",
-                        background=COLORS["bg_page"],
-                        foreground=COLORS["text_secondary"],
-                        padding=[20, 6, 20, 6],
-                        borderwidth=0,
-                        focusthickness=0,
-                        font=FONT_BODY_BOLD)
-        style.map("TNotebook.Tab",
-                  background=[("selected", COLORS["bg_page"])],
-                  foreground=[("selected", COLORS["primary"])])
+        # ========== 页面 0: 概览 Dashboard（首页） ==========
+        self.dashboard_view = DashboardView(
+            right_frame,
+            on_new_task=self._new_task,
+            on_run_search=self._run_history,
+            on_open_library=self._switch_to_library,
+            on_export=self._export_library,
+            on_coupon=self._redeem_coupon_dialog,
+            on_subscribe=self._open_subscription_dialog,
+        )
+        self._pages["dashboard"] = self.dashboard_view
 
-        # ========== Tab 1: 任务设置（可滚动） ==========
-        self._task_tab = ttk.Frame(self.notebook, style="TFrame")
-        self.notebook.add(self._task_tab, text="  📋 任务设置  ")
+        # ========== 页面 1: 监控任务（检索参数） ==========
+        self._task_tab = ttk.Frame(right_frame, style="TFrame")
+        self._pages["monitor"] = self._task_tab
         self._task_tab.columnconfigure(0, weight=1)
         self._task_tab.rowconfigure(0, weight=1)
 
-        # Tab 1 内嵌 Canvas + Scrollbar
+        # 页面 1 内嵌 Canvas + Scrollbar（仅垂直：表单不再需要横向滚动）
         self._task_canvas = tk.Canvas(self._task_tab, borderwidth=0, highlightthickness=0,
                                       bg=COLORS["bg_page"])
-        task_v_scroll = ttk.Scrollbar(self._task_tab, orient=tk.VERTICAL,
-                                      command=self._task_canvas.yview)
-        task_h_scroll = ttk.Scrollbar(self._task_tab, orient=tk.HORIZONTAL,
-                                      command=self._task_canvas.xview)
-        self._task_canvas.configure(yscrollcommand=task_v_scroll.set,
-                                    xscrollcommand=task_h_scroll.set)
+        task_v_scroll = ModernScrollbar(self._task_tab, width=8,
+                                        command=self._task_canvas.yview)
+        self._task_canvas.configure(yscrollcommand=task_v_scroll.set)
         self._task_canvas.grid(row=0, column=0, sticky=tk.NSEW)
         task_v_scroll.grid(row=0, column=1, sticky=tk.NS)
-        task_h_scroll.grid(row=1, column=0, sticky=tk.EW)
 
         scrollable = ttk.Frame(self._task_canvas, style="TFrame")
         scrollable.bind("<Configure>",
@@ -499,101 +524,166 @@ class PaperMonitorApp:
             self._task_canvas.itemconfig(self._task_canvas_window, width=max(event.width, 400))
         self._task_canvas.bind("<Configure>", _configure_task_canvas_width)
 
-        # 鼠标滚轮
+        # 鼠标滚轮（平台自适应：macOS delta 为 1~2，Windows 为 120）
         def _on_mousewheel(event):
-            self._task_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        def _on_shift_mousewheel(event):
-            self._task_canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+            if event.num == 4:
+                self._task_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self._task_canvas.yview_scroll(1, "units")
+            elif event.delta:
+                delta = event.delta if sys.platform == "darwin" else event.delta / 120
+                self._task_canvas.yview_scroll(int(-delta), "units")
+            return "break"
         def _bind_mousewheel(event):
             self._task_canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
-            self._task_canvas.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel, add="+")
+            self._task_canvas.bind_all("<Button-4>", _on_mousewheel, add="+")
+            self._task_canvas.bind_all("<Button-5>", _on_mousewheel, add="+")
         def _unbind_mousewheel(event):
             self._task_canvas.unbind_all("<MouseWheel>")
-            self._task_canvas.unbind_all("<Shift-MouseWheel>")
+            self._task_canvas.unbind_all("<Button-4>")
+            self._task_canvas.unbind_all("<Button-5>")
         scrollable.bind("<Enter>", _bind_mousewheel)
         scrollable.bind("<Leave>", _unbind_mousewheel)
 
-        # 任务设置内容（原 scrollable 内的全部内容）
-        # ========== 任务设置区 ==========
-        # ── 卡片 1: 检索参数 ──
-        search_card = tk.Frame(scrollable, bg=COLORS["bg_card"],
-                               relief="solid", borderwidth=1)
-        search_card.pack(fill=tk.X, padx=2, pady=(0, 12))
+        # ========== 页面 3: 设置（每日推送 + 邮箱配置） ==========
+        self._settings_tab = ttk.Frame(right_frame, style="TFrame")
+        self._pages["settings"] = self._settings_tab
+        self._settings_tab.columnconfigure(0, weight=1)
+        self._settings_tab.rowconfigure(0, weight=1)
 
-        tk.Label(search_card, text="🔍 检索参数", font=FONT_HEADING,
+        settings_canvas = tk.Canvas(self._settings_tab, borderwidth=0, highlightthickness=0,
+                                    bg=COLORS["bg_page"])
+        s_v_scroll = ModernScrollbar(self._settings_tab, width=8,
+                                     command=settings_canvas.yview)
+        settings_canvas.configure(yscrollcommand=s_v_scroll.set)
+        settings_canvas.grid(row=0, column=0, sticky=tk.NSEW)
+        s_v_scroll.grid(row=0, column=1, sticky=tk.NS)
+
+        settings_scrollable = ttk.Frame(settings_canvas, style="TFrame")
+        settings_scrollable.bind("<Configure>",
+                                 lambda e: settings_canvas.configure(scrollregion=settings_canvas.bbox("all")))
+        self._settings_canvas_window = settings_canvas.create_window(
+            (0, 0), window=settings_scrollable, anchor=tk.NW)
+
+        def _configure_settings_canvas_width(event):
+            settings_canvas.itemconfig(self._settings_canvas_window, width=max(event.width, 400))
+        settings_canvas.bind("<Configure>", _configure_settings_canvas_width)
+
+        def _s_mousewheel(event):
+            if event.num == 4:
+                settings_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                settings_canvas.yview_scroll(1, "units")
+            elif event.delta:
+                delta = event.delta if sys.platform == "darwin" else event.delta / 120
+                settings_canvas.yview_scroll(int(-delta), "units")
+            return "break"
+        def _s_bind(event):
+            settings_canvas.bind_all("<MouseWheel>", _s_mousewheel, add="+")
+            settings_canvas.bind_all("<Button-4>", _s_mousewheel, add="+")
+            settings_canvas.bind_all("<Button-5>", _s_mousewheel, add="+")
+        def _s_unbind(event):
+            settings_canvas.unbind_all("<MouseWheel>")
+            settings_canvas.unbind_all("<Button-4>")
+            settings_canvas.unbind_all("<Button-5>")
+        settings_scrollable.bind("<Enter>", _s_bind)
+        settings_scrollable.bind("<Leave>", _s_unbind)
+
+        self._settings_scrollable = settings_scrollable
+
+        # 任务设置内容（原 scrollable 内的全部内容）
+        # ═══ 监控任务页：检索参数 ═══
+        monitor_header = tk.Frame(scrollable, bg=COLORS["bg_page"])
+        monitor_header.pack(fill=tk.X, padx=4, pady=(0, 8))
+        tk.Label(monitor_header, text="监控任务", font=FONT_TITLE,
+                 fg=COLORS["text_title"], bg=COLORS["bg_page"]).pack(side=tk.LEFT)
+        tk.Label(monitor_header, text="配置期刊与关键词，执行论文检索", font=FONT_CAPTION,
+                 fg=COLORS["text_hint"], bg=COLORS["bg_page"]).pack(side=tk.LEFT, padx=(10, 0), pady=(4, 0))
+
+        # ── 卡片 1: 检索参数 ──
+        search_card = _simple_card(scrollable)
+        search_card.pack(fill=tk.X, padx=2, pady=(0, 16))
+
+        tk.Label(search_card.content, text="检索参数", font=FONT_HEADING,
                  fg=COLORS["text_title"], bg=COLORS["bg_card"]
                  ).pack(anchor=tk.W, padx=16, pady=(14, 4))
-        tk.Frame(search_card, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
+        tk.Frame(search_card.content, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
 
         # 表单区域用 grid
-        sf = tk.Frame(search_card, bg=COLORS["bg_card"])
+        sf = tk.Frame(search_card.content, bg=COLORS["bg_card"])
         sf.pack(fill=tk.X, padx=16, pady=(0, 14))
         sf.columnconfigure(1, weight=1)
 
         row = 0
         # 任务名称
         tk.Label(sf, text="任务名称", font=FONT_LABEL,
-                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=row, column=0, sticky=tk.E, padx=(0, 16), pady=6)
         self.task_name_var = tk.StringVar()
-        tk.Entry(sf, textvariable=self.task_name_var,
-                 bd=1, relief="solid", highlightthickness=0,
-                 bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                 insertbackground=COLORS["text_body"], font=FONT_BODY).grid(
+        ModernEntry(sf, textvariable=self.task_name_var).grid(
             row=row, column=1, sticky=tk.EW, pady=6)
         row += 1
 
         # 期刊名称
         tk.Label(sf, text="期刊名称", font=FONT_LABEL,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
-        self.journal_var = tk.StringVar()
-        self.journal_entry = tk.Entry(sf, textvariable=self.journal_var,
-                                      bd=1, relief="solid", highlightthickness=0,
-                                      bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                                      insertbackground=COLORS["text_body"], font=FONT_BODY)
-        self.journal_entry.grid(row=row, column=1, sticky=tk.EW, pady=6)
-        tk.Label(sf, text="英文分号分隔，最多10个，如 Nature;Science;Cell",
-                 font=FONT_CAPTION, fg=COLORS["text_hint"], bg=COLORS["bg_page"]
-                 ).grid(row=row+1, column=1, sticky=tk.W, pady=(0, 6))
-        row += 2
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=row, column=0, sticky=tk.E, padx=(0, 16), pady=6)
+        self.journal_var = tk.StringVar()  # 分号分隔期刊名，供保存/加载兼容
+        self.selected_journals: list = []   # 已选期刊 dict 列表
+        self.selected_journal_ids: list = []  # 已选期刊 id 列表
+        journal_row = tk.Frame(sf, bg=COLORS["bg_card"])
+        journal_row.grid(row=row, column=1, sticky=tk.EW, pady=6)
+        self.journal_pick_btn = ModernButton(
+            journal_row, text="选择期刊 ▾", variant="secondary", height=30,
+            pad_x=16, command=self._open_journal_picker)
+        self.journal_pick_btn.pack(side=tk.LEFT)
+        self._journal_count_label = tk.Label(
+            journal_row, text="已选 0 本", font=FONT_CAPTION,
+            fg=COLORS["primary"], bg=COLORS["bg_card"])
+        self._journal_count_label.pack(side=tk.LEFT, padx=(10, 0))
+
+        # 已选期刊 pill 标签区
+        self._journal_tags_frame = tk.Frame(sf, bg=COLORS["bg_card"])
+        self._journal_tags_frame.grid(row=row+1, column=1, sticky=tk.W, pady=(2, 6))
+        self._journal_hint_label = tk.Label(
+            sf, text="最多选择 10 本期刊，点击「选择期刊」可视化添加",
+            font=FONT_CAPTION, fg=COLORS["text_hint"], bg=COLORS["bg_card"]
+        )
+        self._journal_hint_label.grid(row=row+2, column=1, sticky=tk.W, pady=(0, 6))
+        row += 3
 
         # 关键词
         tk.Label(sf, text="关键词", font=FONT_LABEL,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=row, column=0, sticky=tk.E, padx=(0, 16), pady=6)
         self.keyword_var = tk.StringVar()
-        tk.Entry(sf, textvariable=self.keyword_var,
-                 bd=1, relief="solid", highlightthickness=0,
-                 bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                 insertbackground=COLORS["text_body"], font=FONT_BODY).grid(
+        ModernEntry(sf, textvariable=self.keyword_var).grid(
             row=row, column=1, sticky=tk.EW, pady=6)
         tk.Label(sf, text="英文分号分隔，最多10个",
-                 font=FONT_CAPTION, fg=COLORS["text_hint"], bg=COLORS["bg_page"]
-                 ).grid(row=row+1, column=1, sticky=tk.W, pady=(0, 6))
+                 font=FONT_CAPTION, fg=COLORS["text_hint"], bg=COLORS["bg_card"]
+                 ).grid(row=row+1, column=1, sticky=tk.W, pady=(2, 6))
         row += 2
 
         # 检索范围（双输入框）
         tk.Label(sf, text="检索范围", font=FONT_LABEL,
-                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).grid(row=row, column=0, sticky=tk.W, padx=(0, 12), pady=6)
-        range_frame = tk.Frame(sf, bg=COLORS["bg_page"])
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=row, column=0, sticky=tk.E, padx=(0, 16), pady=6)
+        range_frame = tk.Frame(sf, bg=COLORS["bg_card"])
         range_frame.grid(row=row, column=1, sticky=tk.EW, pady=6)
+        range_frame.columnconfigure(0, weight=1)
+        range_frame.columnconfigure(1, weight=1)
+        range_frame.columnconfigure(2, weight=1)
         self.date_start_var = tk.StringVar()
         self.date_end_var = tk.StringVar()
         # 从原有的 date_var 解析初始值
         _init_dates = self.date_var.get().split(";") if hasattr(self, 'date_var') else ["", ""]
         self.date_start_var.set(_init_dates[0] if len(_init_dates) > 0 else "")
         self.date_end_var.set(_init_dates[1] if len(_init_dates) > 1 else "")
-        tk.Entry(range_frame, textvariable=self.date_start_var,
-                 width=16, bd=1, relief="solid", highlightthickness=0,
-                 bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                 insertbackground=COLORS["text_body"], font=FONT_BODY).pack(side=tk.LEFT)
+        ModernEntry(range_frame, textvariable=self.date_start_var).grid(
+            row=0, column=0, sticky=tk.EW)
         tk.Label(range_frame, text=" → ", font=FONT_BODY,
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_page"]).pack(side=tk.LEFT, padx=6)
-        tk.Entry(range_frame, textvariable=self.date_end_var,
-                 width=16, bd=1, relief="solid", highlightthickness=0,
-                 bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                 insertbackground=COLORS["text_body"], font=FONT_BODY).pack(side=tk.LEFT)
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).grid(row=0, column=1)
+        ModernEntry(range_frame, textvariable=self.date_end_var).grid(
+            row=0, column=2, sticky=tk.EW)
         tk.Label(sf, text="格式: 2020-01-01 → 2026-07-26",
-                 font=FONT_CAPTION, fg=COLORS["text_hint"], bg=COLORS["bg_page"]
-                 ).grid(row=row+1, column=1, sticky=tk.W, pady=(0, 6))
+                 font=FONT_CAPTION, fg=COLORS["text_hint"], bg=COLORS["bg_card"]
+                 ).grid(row=row+1, column=1, sticky=tk.W, pady=(2, 6))
 
         # 保留 date_var 供旧代码使用（同步双输入框→旧变量）
         self.date_var = tk.StringVar()
@@ -605,33 +695,63 @@ class PaperMonitorApp:
         row += 2
 
         # 操作按钮
-        btn_frame = tk.Frame(sf, bg=COLORS["bg_page"])
-        btn_frame.grid(row=row, column=0, columnspan=2, pady=(12, 4))
-        ttk.Button(btn_frame, text=f" {ICONS['search']}  执行检索", style="Primary.TButton",
-                   command=self._run_history).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text=f" {ICONS['save']}  保存任务", style="Secondary.TButton",
-                   command=self._save_task).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text="🗑 删除", style="Danger.TButton",
-                   command=self._delete_task).pack(side=tk.LEFT, padx=4)
+        btn_frame = tk.Frame(sf, bg=COLORS["bg_card"])
+        btn_frame.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(12, 4))
+        ModernButton(btn_frame, text=f" {ICONS['search']} 执行检索", variant="primary",
+                     command=self._run_history).pack(side=tk.LEFT, padx=(0, 8))
+        ModernButton(btn_frame, text=f" {ICONS['save']} 保存任务", variant="secondary",
+                     command=self._save_task).pack(side=tk.LEFT, padx=(0, 8))
+        ModernButton(btn_frame, text="🗑 删除", variant="danger",
+                     command=self._delete_task).pack(side=tk.LEFT)
 
         # 示例填充
         example_btn = tk.Label(sf, text="🌰 试试示例", font=FONT_CAPTION,
-                               fg=COLORS["primary"], bg=COLORS["bg_page"],
+                               fg=COLORS["primary"], bg=COLORS["bg_card"],
                                cursor="hand2")
         example_btn.grid(row=row+1, column=1, sticky=tk.W, pady=(6, 0))
         example_btn.bind("<Button-1>", lambda e: self._fill_example())
 
-        # ── 卡片 2: 每日推送状态 ──
-        push_card = tk.Frame(scrollable, bg=COLORS["bg_card"],
-                             relief="solid", borderwidth=1)
-        push_card.pack(fill=tk.X, padx=2, pady=(0, 12))
+        # 监控页底部留白：避免最后一个元素贴边
+        tk.Frame(scrollable, bg=COLORS["bg_page"], height=20).pack(fill=tk.X)
 
-        tk.Label(push_card, text="📧 每日推送", font=FONT_HEADING,
+        # ═══ 设置页：每日推送 + 邮箱配置 ═══
+        settings_header = tk.Frame(self._settings_scrollable, bg=COLORS["bg_page"])
+        settings_header.pack(fill=tk.X, padx=4, pady=(0, 8))
+        tk.Label(settings_header, text="设置", font=FONT_TITLE,
+                 fg=COLORS["text_title"], bg=COLORS["bg_page"]).pack(side=tk.LEFT)
+        tk.Label(settings_header, text="每日推送与邮件配置", font=FONT_CAPTION,
+                 fg=COLORS["text_hint"], bg=COLORS["bg_page"]).pack(side=tk.LEFT, padx=(10, 0), pady=(4, 0))
+
+        # ── 卡片 1: 激活状态 + 礼品券入口 ──
+        license_card = _simple_card(self._settings_scrollable)
+        license_card.pack(fill=tk.X, padx=2, pady=(0, 16))
+
+        tk.Label(license_card.content, text="激活状态", font=FONT_HEADING,
                  fg=COLORS["text_title"], bg=COLORS["bg_card"]
                  ).pack(anchor=tk.W, padx=16, pady=(14, 4))
-        tk.Frame(push_card, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
+        tk.Frame(license_card.content, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
 
-        pf = tk.Frame(push_card, bg=COLORS["bg_card"])
+        lf = tk.Frame(license_card.content, bg=COLORS["bg_card"])
+        lf.pack(fill=tk.X, padx=16, pady=(0, 14))
+        self._settings_license_label = tk.Label(lf, text="", font=FONT_BODY_BOLD,
+                                                fg=COLORS["text_body"], bg=COLORS["bg_card"],
+                                                anchor=tk.W)
+        self._settings_license_label.pack(fill=tk.X, pady=4)
+        self._settings_coupon_btn = ModernButton(lf, text="🎟 兑换礼品券",
+                                                 variant="primary",
+                                                 command=self._redeem_coupon_dialog)
+        self._settings_coupon_btn.pack(anchor=tk.W, pady=(4, 0))
+
+        # ── 卡片 2: 每日推送状态（归入"设置"页） ──
+        push_card = _simple_card(self._settings_scrollable)
+        push_card.pack(fill=tk.X, padx=2, pady=(0, 16))
+
+        tk.Label(push_card.content, text="每日推送", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_card"]
+                 ).pack(anchor=tk.W, padx=16, pady=(14, 4))
+        tk.Frame(push_card.content, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
+
+        pf = tk.Frame(push_card.content, bg=COLORS["bg_card"])
         pf.pack(fill=tk.X, padx=16, pady=(0, 14))
 
         # 第一行：状态 + 开关
@@ -648,9 +768,9 @@ class PaperMonitorApp:
                                           bg=COLORS["bg_card"])
         self._push_status_text.pack(side=tk.LEFT)
 
-        self._push_toggle_btn = ttk.Button(push_row1, text="启动每日推送",
-                                           style="Primary.TButton",
-                                           command=self._toggle_scheduler)
+        self._push_toggle_btn = ModernButton(push_row1, text="启动每日推送",
+                                             variant="primary",
+                                             command=self._toggle_scheduler)
         self._push_toggle_btn.pack(side=tk.RIGHT)
 
         # 第二行：监控统计
@@ -667,7 +787,8 @@ class PaperMonitorApp:
 
         tk.Label(stats_left, text="推送时间  ", font=FONT_CAPTION,
                  fg=COLORS["text_hint"], bg=COLORS["bg_card"]).pack(side=tk.LEFT)
-        self._push_time_label = tk.Label(stats_left, text="每日 08:00",
+        _cur_push = str(load_app_config().get("push_time", "08:00"))
+        self._push_time_label = tk.Label(stats_left, text=f"每日 {_cur_push}",
                                          font=FONT_BODY_BOLD,
                                          fg=COLORS["text_body"], bg=COLORS["bg_card"])
         self._push_time_label.pack(side=tk.LEFT, padx=(0, 16))
@@ -679,23 +800,71 @@ class PaperMonitorApp:
                                           fg=COLORS["success"], bg=COLORS["bg_card"])
         self._push_total_label.pack(side=tk.LEFT)
 
-        # ── 卡片 3: 邮箱配置 ──
-        monitor_card = tk.Frame(scrollable, bg=COLORS["bg_card"],
-                                relief="solid", borderwidth=1)
-        monitor_card.pack(fill=tk.X, padx=2, pady=(0, 12))
+        # 推送时间选择器（用户自选，每半小时一档）
+        push_time_row = tk.Frame(pf, bg=COLORS["bg_card"])
+        push_time_row.pack(fill=tk.X, pady=4)
+        tk.Label(push_time_row, text="推送时间", font=FONT_CAPTION,
+                 fg=COLORS["text_hint"], bg=COLORS["bg_card"]).pack(side=tk.LEFT)
+        self._push_time_var = tk.StringVar(value=_cur_push)
+        self._push_time_combo = ttk.Combobox(
+            push_time_row, textvariable=self._push_time_var,
+            width=12, font=FONT_BODY,
+            values=[f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 30)])
+        self._push_time_combo.pack(side=tk.LEFT, padx=(8, 0))
+        self._push_time_combo.bind("<<ComboboxSelected>>",
+                                   lambda e: self._on_push_time_changed())
+        tk.Label(push_time_row, text="每日推送时刻（修改后需重启推送生效）", font=FONT_CAPTION,
+                 fg=COLORS["text_hint"], bg=COLORS["bg_card"]).pack(side=tk.LEFT, padx=(10, 0))
 
-        tk.Label(monitor_card, text="📧 邮箱配置", font=FONT_HEADING,
+        # ── 卡片: AI 翻译（英→中） ──
+        ai_card = _simple_card(self._settings_scrollable)
+        ai_card.pack(fill=tk.X, padx=2, pady=(0, 16))
+
+        tk.Label(ai_card.content, text="🌐 AI 翻译（英→中）", font=FONT_HEADING,
                  fg=COLORS["text_title"], bg=COLORS["bg_card"]
                  ).pack(anchor=tk.W, padx=16, pady=(14, 4))
-        tk.Frame(monitor_card, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
+        tk.Frame(ai_card.content, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
 
-        mf = tk.Frame(monitor_card, bg=COLORS["bg_card"])
+        ai_form = tk.Frame(ai_card.content, bg=COLORS["bg_card"])
+        ai_form.pack(fill=tk.X, padx=16, pady=(0, 14))
+        ai_row = tk.Frame(ai_form, bg=COLORS["bg_card"])
+        ai_row.pack(fill=tk.X, pady=4)
+        self._ai_translate_var = tk.BooleanVar(
+            value=bool(load_app_config().get("translate_enabled", False)))
+        self._ai_translate_toggle = ToggleSwitch(
+            ai_row, width=64, height=32,
+            initial=self._ai_translate_var.get(),
+            command=self._on_ai_translate_toggle)
+        self._ai_translate_toggle.pack(side=tk.LEFT)
+        tk.Label(ai_row, text="开启后论文标题与摘要自动翻译为中文（检索报告与推送邮件均含）",
+                 font=FONT_CAPTION, fg=COLORS["text_hint"],
+                 bg=COLORS["bg_card"]).pack(side=tk.LEFT, padx=(8, 0))
+
+        # AI 配置按钮（与 Sci-Hub「保存 PDF 设置」一致：Secondary 按钮）
+        ai_btn_row = tk.Frame(ai_form, bg=COLORS["bg_card"])
+        ai_btn_row.pack(fill=tk.X, pady=(8, 4))
+        ModernButton(ai_btn_row, text="⚙ 配置 API", variant="secondary", height=30,
+                     command=self._open_llm_config_dialog).pack(side=tk.LEFT)
+        tk.Label(ai_btn_row, text="选择厂商并填写 API Key（DeepSeek / 豆包 / MiniMax）",
+                 font=FONT_CAPTION, fg=COLORS["text_hint"],
+                 bg=COLORS["bg_card"]).pack(side=tk.LEFT, padx=(8, 0))
+
+        # ── 卡片 3: 邮箱配置（归入"设置"页） ──
+        monitor_card = _simple_card(self._settings_scrollable)
+        monitor_card.pack(fill=tk.X, padx=2, pady=(0, 16))
+
+        tk.Label(monitor_card.content, text="邮箱配置", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_card"]
+                 ).pack(anchor=tk.W, padx=16, pady=(14, 4))
+        tk.Frame(monitor_card.content, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
+
+        mf = tk.Frame(monitor_card.content, bg=COLORS["bg_card"])
         mf.pack(fill=tk.X, padx=16, pady=(0, 14))
         mf.columnconfigure(1, weight=1)
 
         # 收件邮箱
         tk.Label(mf, text="收件邮箱", font=FONT_LABEL,
-                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=1, column=0, sticky=tk.NW, padx=(0, 12), pady=8)
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(row=1, column=0, sticky=tk.NW, padx=(0, 16), pady=8)
         receiver_container = tk.Frame(mf, bg=COLORS["bg_card"])
         receiver_container.grid(row=1, column=1, sticky=tk.EW, pady=8)
         receiver_container.columnconfigure(0, weight=1)
@@ -708,18 +877,13 @@ class PaperMonitorApp:
         receiver_add_frame.pack(fill=tk.X, pady=(4, 0))
 
         self._new_receiver_var = tk.StringVar()
-        self._new_receiver_entry = tk.Entry(receiver_add_frame, textvariable=self._new_receiver_var,
-                                            width=30, bd=1, relief="solid", highlightthickness=0,
-                                            bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                                            insertbackground=COLORS["text_body"], font=FONT_BODY)
-        self._new_receiver_entry.pack(side=tk.LEFT, padx=(0, 8))
-        add_btn = tk.Label(receiver_add_frame, text="+ 添加",
-                           font=FONT_CAPTION, fg=COLORS["primary"], bg=COLORS["bg_card"], cursor="hand2")
-        add_btn.pack(side=tk.LEFT)
-        add_btn.bind("<Button-1>", lambda e: self._add_receiver())
-        add_btn.bind("<Enter>", lambda e: add_btn.configure(fg=COLORS["primary_hover"]))
-        add_btn.bind("<Leave>", lambda e: add_btn.configure(fg=COLORS["primary"]))
-        self._new_receiver_entry.bind("<Return>", lambda e: self._add_receiver())
+        self._new_receiver_entry = ModernEntry(receiver_add_frame,
+                                               textvariable=self._new_receiver_var,
+                                               placeholder="name@example.com")
+        self._new_receiver_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        ModernButton(receiver_add_frame, text="＋ 添加", variant="secondary", height=30,
+                     command=self._add_receiver).pack(side=tk.LEFT)
+        self._new_receiver_entry.entry.bind("<Return>", lambda e: self._add_receiver())
 
         # ── SMTP 配置（可折叠） ──
         smtp_header = tk.Frame(mf, bg=COLORS["bg_card"])
@@ -792,15 +956,15 @@ class PaperMonitorApp:
         # 操作按钮
         btn_row_email = tk.Frame(scf, bg=COLORS["bg_card"])
         btn_row_email.grid(row=4, column=0, columnspan=4, sticky=tk.EW, pady=(8, 4))
-        ttk.Button(btn_row_email, text="保存配置", style="Primary.TButton",
-                   command=self._save_email_config).pack(side=tk.LEFT)
+        ModernButton(btn_row_email, text="保存配置", variant="primary",
+                     command=self._save_email_config).pack(side=tk.LEFT)
         self._resend_btn = ttk.Button(btn_row_email, text="再发送", style="Secondary.TButton",
                                       command=self._resend_unsent_email)
         self._resend_btn.pack(side=tk.LEFT, padx=(8, 0))
         self._resend_btn.state(["disabled"])
 
         # 使用指南 + 礼品券 链接
-        links_frame = tk.Frame(monitor_card, bg=COLORS["bg_card"])
+        links_frame = tk.Frame(monitor_card.content, bg=COLORS["bg_card"])
         links_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
         for text, cmd in [("📖 使用指南", self._show_email_intro),
                           ("🎟 礼品券", self._redeem_coupon_dialog)]:
@@ -811,20 +975,74 @@ class PaperMonitorApp:
             lb.bind("<Enter>", lambda e, l=lb: l.configure(fg=COLORS["primary_hover"]))
             lb.bind("<Leave>", lambda e, l=lb: l.configure(fg=COLORS["primary"]))
 
+        # ── 卡片: PDF 下载 ──
+        from core.pdf_config import load_pdf_config, save_pdf_config
+        pdf_cfg = load_pdf_config()
+        pdf_card = _simple_card(self._settings_scrollable)
+        pdf_card.pack(fill=tk.X, padx=2, pady=(0, 16))
+
+        tk.Label(pdf_card.content, text="📄 PDF 下载", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_card"]
+                 ).pack(anchor=tk.W, padx=16, pady=(14, 4))
+        tk.Frame(pdf_card.content, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 10))
+
+        pdf_form = tk.Frame(pdf_card.content, bg=COLORS["bg_card"])
+        pdf_form.pack(fill=tk.X, padx=16, pady=(0, 14))
+        pdf_form.columnconfigure(1, weight=1)
+
+        # 保存目录
+        tk.Label(pdf_form, text="保存目录", font=FONT_LABEL,
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 16), pady=8)
+        dir_row = tk.Frame(pdf_form, bg=COLORS["bg_card"])
+        dir_row.grid(row=0, column=1, sticky=tk.EW, pady=8)
+        dir_row.columnconfigure(0, weight=1)
+        self._pdf_dir_var = tk.StringVar(value=pdf_cfg.get("pdf_dir", ""))
+        self._pdf_dir_entry = ModernEntry(dir_row, textvariable=self._pdf_dir_var)
+        self._pdf_dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        ModernButton(dir_row, text="浏览…", variant="secondary", height=30,
+                     command=self._browse_pdf_dir).pack(side=tk.LEFT)
+
+        # 启用 Sci-Hub 增强
+        tk.Label(pdf_form, text="Sci-Hub 增强", font=FONT_LABEL,
+                 fg=COLORS["text_body"], bg=COLORS["bg_card"]).grid(
+            row=1, column=0, sticky=tk.W, padx=(0, 16), pady=8)
+        sci_row = tk.Frame(pdf_form, bg=COLORS["bg_card"])
+        sci_row.grid(row=1, column=1, sticky=tk.W, pady=8)
+        self._scihub_toggle = ToggleSwitch(
+            sci_row, width=64, height=32,
+            initial=bool(pdf_cfg.get("enable_scihub")),
+            command=self._on_scihub_toggle)
+        self._scihub_toggle.pack(side=tk.LEFT)
+        tk.Label(sci_row, text="开启后可从 Sci-Hub 获取付费论文 PDF（存在版权风险）",
+                 font=FONT_CAPTION, fg=COLORS["text_hint"],
+                 bg=COLORS["bg_card"]).pack(side=tk.LEFT, padx=(8, 0))
+
+        ModernButton(pdf_form, text="保存 PDF 设置", variant="secondary", height=30,
+                     command=self._on_pdf_cfg_changed).grid(
+            row=2, column=1, sticky=tk.W, pady=(8, 4))
+
+        # 设置页底部留白：避免最后一个元素贴边
+        tk.Frame(self._settings_scrollable, bg=COLORS["bg_page"], height=20).pack(fill=tk.X)
+
         # ========== CNKI 知网数据获取模块 ==========
         # 已移除
 
-        # ========== Tab 2: 文献书架 (LibraryView) ==========
-        self.library_view = LibraryView(self.notebook)
-        self.notebook.add(self.library_view, text="  📚 文献书架  ")
+        # ========== 页面 2: 文献书架 (LibraryView) ==========
+        self.library_view = LibraryView(
+            right_frame,
+            on_download_pdf=self._download_paper_pdf,
+        )
+        self._pages["library"] = self.library_view
 
         # 兼容旧代码：保留 _refresh_library 别名
         def _refresh_library():
             self.library_view.refresh()
         self._refresh_library = _refresh_library
 
-        # ========== Notebook 标签切换事件 ==========
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        # 显示默认页面（概览）
+        self._current_page = "dashboard"
+        self._show_page("dashboard")
 
         # -------- 进度条（常驻 2px 分割线，活跃时展开） --------
         self.progress_var = tk.DoubleVar(value=0.0)
@@ -853,9 +1071,9 @@ class PaperMonitorApp:
         self.progress_label.pack(side=tk.LEFT, fill=tk.X, padx=(0, 24))
 
         # 取消检索按钮（Secondary 灰色）
-        self._cancel_search_btn = ttk.Button(
-            progress_frame, text=f" {ICONS['cancel']}  取消",
-            style="Secondary.TButton",
+        self._cancel_search_btn = ModernButton(
+            progress_frame, text=f" {ICONS['cancel']} 取消",
+            variant="secondary",
             command=self._cancel_current_search,
         )
         self._cancel_search_btn.pack(side=tk.RIGHT, padx=(0, 24))
@@ -890,19 +1108,20 @@ class PaperMonitorApp:
                  bg=COLORS["sidebar_bg"]
                  ).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=8)
 
+        # 版本号弱化显示（报告建议：不占状态栏主要位置）
         self._version_label = tk.Label(inner_sf,
-                                        text=f"郑州大学 v{APP_VERSION}",
-                                        font=FONT_CAPTION,
-                                        fg=COLORS["text_hint"],
+                                        text=f"v{APP_VERSION}",
+                                        font=(_ui_font_family(), 8),
+                                        fg=COLORS["border"],
                                         bg=COLORS["sidebar_bg"])
-        self._version_label.pack(side=tk.RIGHT, padx=(8, 16), pady=8)
+        self._version_label.pack(side=tk.RIGHT, padx=(0, 16), pady=8)
 
         self._next_run_label = tk.Label(inner_sf,
                                         text=f"{ICONS['clock']} 下次执行：--",
                                         font=FONT_CAPTION,
                                         fg=COLORS["text_secondary"],
                                         bg=COLORS["sidebar_bg"])
-        self._next_run_label.pack(side=tk.RIGHT, padx=(0, 16), pady=8)
+        self._next_run_label.pack(side=tk.RIGHT, padx=(0, 8), pady=8)
 
         # 现在 pack idle 细线（在所有控件之后）
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
@@ -914,27 +1133,63 @@ class PaperMonitorApp:
             self.sidebar.refresh_tasks()
             # 同步更新侧栏底部任务计数
             tasks = load_all_tasks()
-            enabled_count = sum(1 for t in tasks.values() if t.get("enabled", True))
-            self.sidebar.set_task_count(len(tasks), enabled_count)
+            real_tasks = [t for t in tasks.values() if isinstance(t, dict)]
+            enabled_count = sum(1 for t in real_tasks if t.get("enabled", True))
+            self.sidebar.set_task_count(len(real_tasks), enabled_count)
+            self.sidebar.set_push_status(self._scheduler_daemon_running)
+            # 刷新概览页
+            if hasattr(self, 'dashboard_view'):
+                self.dashboard_view.refresh()
             # 调试：打印 task_count
             print(f"[DEBUG] set_task_count({len(tasks)}, {enabled_count})")
 
     def _on_sidebar_select(self, task_id):
-        """Sidebar 选中任务时的回调"""
+        """Sidebar 选中任务时的回调：切到监控任务页并加载表单"""
         if self._executing:
             return
         self.current_task_id = task_id
         self._load_task_to_form(task_id)
+        # 选中任务时切到监控任务页
+        if hasattr(self, '_pages') and "monitor" in self._pages:
+            self._show_page("monitor")
+            if hasattr(self, 'sidebar'):
+                self.sidebar.set_current_page("monitor")
+
+    def _show_page(self, page):
+        """页面栈切换：显示指定页面，隐藏其他"""
+        if not hasattr(self, '_pages'):
+            return
+        for name, widget in self._pages.items():
+            if name == page:
+                widget.grid(row=0, column=0, sticky=tk.NSEW)
+            else:
+                widget.grid_remove()
+        self._current_page = page
+
+    def _on_sidebar_nav(self, page):
+        """侧栏导航点击：切换到对应内容页"""
+        if not hasattr(self, '_pages'):
+            return
+        if page not in self._pages:
+            return
+        self._show_page(page)
+        if page == "dashboard" and hasattr(self, 'dashboard_view'):
+            self.dashboard_view.refresh()
+        elif page == "library" and hasattr(self, 'library_view'):
+            self.library_view.refresh()
 
     def _new_task(self):
         self.current_task_id = None
         self.task_name_var.set("")
         self.journal_var.set("")
+        self.selected_journals = []
+        self.selected_journal_ids = []
         self.keyword_var.set("")
         self.date_start_var.set("2016-01-01")
         self.date_end_var.set("2026-01-01")
         self.date_var.set("2016-01-01;2026-01-01")
         self.status_var.set("当前：新建任务")
+        self._refresh_journal_tags()
 
     def _delete_task(self):
         task_id = self.sidebar.get_selected_task_id() if hasattr(self, 'sidebar') else None
@@ -947,19 +1202,150 @@ class PaperMonitorApp:
             self._new_task()
         return "break"
 
+    def _delete_task_from_sidebar(self, task_id):
+        """侧栏右键菜单「删除」：确认后删除任务并刷新。"""
+        task = get_task(task_id)
+        name = task.get("name", "") if task else task_id
+        if not messagebox.askyesno("删除任务", f"确定要删除任务「{name}」吗？"):
+            return
+        delete_task(task_id)
+        # 若删除的是当前选中/编辑中的任务，清空表单
+        if self.current_task_id == task_id:
+            self._new_task()
+        self._refresh_task_list()
+
     def _load_task_to_form(self, task_id):
         task = get_task(task_id)
         if not task:
             return
         self.task_name_var.set(task["name"])
-        self.journal_var.set("; ".join(task["journals"]))
         self.keyword_var.set("; ".join(task["keywords"]))
         ds = task.get("date_start", "")
         de = task.get("date_end", "")
         self.date_start_var.set(ds)
         self.date_end_var.set(de)
         self.date_var.set(f"{ds};{de}")
+        # 还原已选期刊（任务存期刊名 → 通过期刊库映射为 dict）
+        journals = task.get("journals", [])
+        mapped = []
+        try:
+            store = self._journal_store()
+            for nm in journals:
+                j = store.get_by_name(nm, fuzzy=False)
+                if j:
+                    mapped.append(j)
+                else:
+                    # 库外/手动输入期刊保留名称，避免还原时丢失
+                    mapped.append({"full_name": nm})
+        except Exception:
+            mapped = []
+        if mapped:
+            self.selected_journals = mapped
+            self.selected_journal_ids = [j.get("jid") for j in mapped]
+        else:
+            self.selected_journals = []
+            self.selected_journal_ids = []
+        self._refresh_journal_tags()
         self.status_var.set(f"当前编辑：{task['name']}")
+
+    # ===================== 期刊选择器 =====================
+    def _journal_store(self) -> JournalStore:
+        """惰性创建期刊数据库访问层。"""
+        if not hasattr(self, "_journal_store_obj"):
+            from core.journal_store import JournalStore
+            self._journal_store_obj = JournalStore()
+            try:
+                self._journal_store_obj.ensure_db()
+            except Exception:
+                pass
+        return self._journal_store_obj
+
+    def _update_journal_var(self):
+        """同步 journal_var（分号分隔名）与 selected_journals，供保存/校验兼容。"""
+        self.journal_var.set("; ".join(j.get("full_name", "") for j in self.selected_journals))
+
+    def _refresh_journal_tags(self):
+        """渲染已选期刊 pill 标签区 + 数量。"""
+        if not hasattr(self, "_journal_tags_frame"):
+            return
+        for w in self._journal_tags_frame.winfo_children():
+            w.destroy()
+
+        n = len(self.selected_journals)
+        self._journal_count_label.configure(text=f"已选 {n} 本")
+
+        if n == 0:
+            tk.Label(self._journal_tags_frame, text="尚未选择期刊",
+                     font=FONT_CAPTION, fg=COLORS["text_hint"],
+                     bg=COLORS["bg_card"]).pack(side=tk.LEFT)
+        else:
+            for j in self.selected_journals:
+                name = j.get("full_name", "")
+                tag = tk.Label(self._journal_tags_frame,
+                               text=f"{name[:14]}{'…' if len(name) > 14 else ''} ×",
+                               font=FONT_CAPTION, fg=COLORS["primary"],
+                               bg=COLORS["primary_light"], padx=8, pady=3, cursor="hand2")
+                tag.pack(side=tk.LEFT, padx=3, pady=2)
+                tag.bind("<Button-1>",
+                         lambda e, jj=j: self._remove_journal(jj))
+
+        # 提示文案
+        if n == 0:
+            self._journal_hint_label.configure(
+                text="至少选择 1 本期刊，点击「选择期刊」可视化添加",
+                fg=COLORS["text_hint"])
+        elif n <= 10:
+            self._journal_hint_label.configure(
+                text=f"✓ 已选 {n} 本期刊（上限 10）", fg=COLORS["success"])
+        else:
+            self._journal_hint_label.configure(
+                text=f"✗ 已选 {n} 本，超过上限 10 本", fg=COLORS["danger"])
+
+        self._update_journal_var()
+
+    def _open_journal_picker(self):
+        """打开智能期刊选择器，确认后回填已选期刊。"""
+        from gui.journal_picker import JournalPickerDialog
+        try:
+            store = self._journal_store()
+        except Exception as e:
+            messagebox.showerror("期刊库错误", f"无法加载期刊数据库：{e}")
+            return
+
+        current_names = [j.get("full_name", "") for j in self.selected_journals]
+
+        def _on_confirm(names):
+            # names 为期刊名 list，重新映射为 dict（库外/手动输入期刊保留名称）
+            mapped = []
+            for nm in names:
+                j = store.get_by_name(nm, fuzzy=False)
+                if j:
+                    mapped.append(j)
+                else:
+                    mapped.append({"full_name": nm})
+            self.selected_journals = mapped
+            self.selected_journal_ids = [j.get("jid") for j in mapped]
+            self._refresh_journal_tags()
+            self.status_var.set("期刊选择完成，可保存任务")
+
+        JournalPickerDialog(self.root, store, selected=current_names,
+                            max_selected=10, on_confirm=_on_confirm)
+
+    def _remove_journal(self, journal: dict):
+        """移除单个已选期刊。"""
+        jid = journal.get("jid")
+        if jid is not None:
+            # 库内期刊按 jid 匹配
+            self.selected_journals = [j for j in self.selected_journals
+                                      if j.get("jid") != jid]
+            self.selected_journal_ids = [i for i in self.selected_journal_ids if i != jid]
+        else:
+            # 库外/手动输入期刊无 jid，按名称匹配；重建 id 列表保持对应
+            name = journal.get("full_name", "")
+            self.selected_journals = [j for j in self.selected_journals
+                                      if j.get("full_name") != name]
+            self.selected_journal_ids = [j.get("jid") for j in self.selected_journals]
+        self._refresh_journal_tags()
 
     # ===================== 保存与校验 =====================
     def _save_task(self):
@@ -1012,7 +1398,22 @@ class PaperMonitorApp:
     def _fill_example(self):
         """快速填入示例数据，让新用户一键跑通"""
         self.task_name_var.set("AI 顶刊监控")
-        self.journal_var.set("Nature;Science;Cell")
+        # 通过期刊库映射示例期刊
+        try:
+            store = self._journal_store()
+            mapped = []
+            for nm in ("Nature", "Science", "Cell"):
+                j = store.get_by_name(nm, fuzzy=False)
+                if j:
+                    mapped.append(j)
+            if mapped:
+                self.selected_journals = mapped
+                self.selected_journal_ids = [j.get("jid") for j in mapped]
+                self._refresh_journal_tags()
+            else:
+                self.journal_var.set("Nature;Science;Cell")
+        except Exception:
+            self.journal_var.set("Nature;Science;Cell")
         self.keyword_var.set("artificial intelligence;machine learning;deep learning")
         self.date_start_var.set("2025-01-01")
         self.date_end_var.set("2026-07-26")
@@ -1022,7 +1423,7 @@ class PaperMonitorApp:
             self._save_task()
 
     def _is_activated_cached(self) -> bool:
-        """会话级激活缓存：先查 14 天试用，再查礼品券"""
+        """会话级激活缓存：先查 7 天试用，再查礼品券"""
         if self._activation_cache is None:
             self._activation_cache = coupon_manager.is_feature_allowed()
         return self._activation_cache
@@ -1035,14 +1436,12 @@ class PaperMonitorApp:
         """礼品券兑换成功后清除缓存，下次调用重新联网确认"""
         self._activation_cache = None
 
-    def _on_tab_changed(self, event=None):
-        """Notebook 标签切换时刷新书架"""
-        if not hasattr(self, 'notebook'):
-            return
-        current = self.notebook.index(self.notebook.select())
-        if current == 1:  # 文献书架
-            if hasattr(self, 'library_view'):
-                self.library_view.refresh()
+    def _on_page_changed(self, page):
+        """侧栏导航切换后刷新对应页面内容"""
+        if page == "dashboard" and hasattr(self, 'dashboard_view'):
+            self.dashboard_view.refresh()
+        elif page == "library" and hasattr(self, 'library_view'):
+            self.library_view.refresh()
 
     # ===================== 检索执行（一键检索） =====================
     def _run_history(self):
@@ -1122,7 +1521,11 @@ class PaperMonitorApp:
             except KeyboardInterrupt:
                 self.root.after(0, lambda: self._on_history_cancelled())
             except Exception as e:
-                self.root.after(0, lambda: self._on_history_error(str(e)))
+                from core.translator import TranslationError
+                if isinstance(e, TranslationError):
+                    self.root.after(0, lambda: self._on_history_error(e))
+                else:
+                    self.root.after(0, lambda: self._on_history_error(str(e)))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1262,11 +1665,440 @@ class PaperMonitorApp:
         self.root.after(duration * 1000, lambda: toast.destroy() if toast.winfo_exists() else None)
 
     def _switch_to_library(self):
-        """切换到文献书架 Tab"""
-        if hasattr(self, 'notebook'):
-            self.notebook.select(1)
+        """切换到文献书架页面"""
+        if hasattr(self, '_pages'):
+            self._show_page("library")
+            if hasattr(self, 'sidebar'):
+                self.sidebar.set_current_page("library")
         if hasattr(self, 'library_view'):
             self.library_view.refresh()
+
+    def _export_library(self):
+        """从概览页导出书架（导出全部论文为 RIS）"""
+        try:
+            from core.library import load_library, export_ris
+            from tkinter import filedialog
+            lib = load_library()
+            papers = lib.get("papers", [])
+            if not papers:
+                messagebox.showwarning("提示", "书架为空，无数据可导出")
+                return
+            fp = filedialog.asksaveasfilename(
+                defaultextension=".ris",
+                filetypes=[("RIS 文件", "*.ris")],
+                initialfile="hongxun_export.ris")
+            if fp:
+                export_ris(papers, fp)
+                messagebox.showinfo("导出成功", f"已导出 {len(papers)} 篇论文")
+        except Exception as e:
+            messagebox.showerror("导出失败", str(e))
+
+    # ═══ PDF 下载 ═══
+    def _browse_pdf_dir(self):
+        from tkinter import filedialog
+        d = filedialog.askdirectory(title="选择 PDF 保存目录",
+                                    initialdir=self._pdf_dir_var.get() or "~")
+        if d:
+            self._pdf_dir_var.set(d)
+            self._on_pdf_cfg_changed()
+
+    def _on_ai_translate_toggle(self):
+        """AI 翻译开关：读写 app_config.translate_enabled。开启时引导配置 API。"""
+        cfg = load_app_config()
+        enabled = bool(self._ai_translate_toggle.get())
+        if enabled and not coupon_manager.is_in_validity():
+            # 未激活/已到期 → 回退开关并引导订阅
+            self._ai_translate_toggle.set(False)
+            self._require_activation("AI 翻译")
+            return
+        cfg["translate_enabled"] = enabled
+        save_app_config(cfg)
+        if enabled:
+            # 开启后若尚未配置 API Key，引导用户到配置弹窗
+            from core.translator import get_api_key
+            if not get_api_key():
+                self._show_toast("请先配置 LLM API Key")
+                self._open_llm_config_dialog()
+            else:
+                self._show_toast("AI 翻译已开启")
+        else:
+            self._show_toast("AI 翻译已关闭")
+
+    def _open_llm_config_dialog(self):
+        """打开 LLM 大模型 API 配置弹窗（厂商 / Key / Base URL / 模型 + 测试连接）。"""
+        from core import translator
+
+        cfg = load_app_config()
+        cur_provider = cfg.get("llm_provider", "deepseek") or "deepseek"
+        cur_base = (cfg.get("llm_base_url") or "").strip()
+        cur_model = (cfg.get("llm_model") or "").strip()
+        cur_key = translator.get_api_key()
+
+        win = tk.Toplevel(self.root)
+        win.title("AI 翻译 · LLM API 配置")
+        win.transient(self.root)
+        win.resizable(False, False)
+        win.configure(bg=COLORS["bg_page"])
+        win.attributes("-topmost", True)
+
+        form = tk.Frame(win, bg=COLORS["bg_page"])
+        form.pack(fill=tk.BOTH, expand=True, padx=24, pady=20)
+
+        def _row():
+            r = tk.Frame(form, bg=COLORS["bg_page"])
+            r.pack(fill=tk.X, pady=6)
+            return r
+
+        # 厂商下拉
+        r0 = _row()
+        tk.Label(r0, text="厂商", font=FONT_LABEL, fg=COLORS["text_body"],
+                 bg=COLORS["bg_page"]).pack(side=tk.LEFT)
+        providers_keys = list(translator.PROVIDERS.keys())
+        self._llm_provider_var = tk.StringVar(value=cur_provider if cur_provider in providers_keys else "custom")
+        self._llm_provider_cb = ttk.Combobox(
+            r0, textvariable=self._llm_provider_var, state="readonly",
+            values=[translator.PROVIDERS[k]["label"] for k in providers_keys],
+            width=34, font=FONT_BODY)
+        self._llm_provider_cb.pack(side=tk.LEFT, padx=(10, 0))
+
+        # API Key（掩码 + 可见性切换）
+        r1 = _row()
+        tk.Label(r1, text="API Key", font=FONT_LABEL, fg=COLORS["text_body"],
+                 bg=COLORS["bg_page"]).pack(side=tk.LEFT)
+        self._llm_key_var = tk.StringVar(value=cur_key)
+        self._llm_key_entry = ModernEntry(r1, textvariable=self._llm_key_var, width=36, show="•")
+        self._llm_key_entry.pack(side=tk.LEFT, padx=(10, 0))
+        self._llm_key_show = False
+        key_eye = tk.Label(r1, text="👁", font=FONT_BODY, fg=COLORS["primary"], cursor="hand2",
+                           bg=COLORS["bg_page"])
+        key_eye.pack(side=tk.LEFT, padx=(6, 0))
+        def _toggle_key_visibility():
+            self._llm_key_show = not self._llm_key_show
+            self._llm_key_entry.configure(show="" if self._llm_key_show else "•")
+            key_eye.configure(text="🙈" if self._llm_key_show else "👁")
+        key_eye.bind("<Button-1>", lambda e: _toggle_key_visibility())
+
+        # Base URL
+        r2 = _row()
+        tk.Label(r2, text="Base URL", font=FONT_LABEL, fg=COLORS["text_body"],
+                 bg=COLORS["bg_page"]).pack(side=tk.LEFT)
+        self._llm_base_var = tk.StringVar(value=cur_base)
+        self._llm_base_entry = ModernEntry(r2, textvariable=self._llm_base_var, width=36)
+        self._llm_base_entry.pack(side=tk.LEFT, padx=(10, 0))
+
+        # Model
+        r3 = _row()
+        tk.Label(r3, text="Model", font=FONT_LABEL, fg=COLORS["text_body"],
+                 bg=COLORS["bg_page"]).pack(side=tk.LEFT)
+        self._llm_model_var = tk.StringVar(value=cur_model)
+        self._llm_model_entry = ModernEntry(r3, textvariable=self._llm_model_var, width=36)
+        self._llm_model_entry.pack(side=tk.LEFT, padx=(10, 0))
+
+        # 厂商选择后自动填充预设
+        def _on_provider_select(event=None):
+            label = self._llm_provider_cb.get()
+            key = None
+            for k, p in translator.PROVIDERS.items():
+                if p["label"] == label:
+                    key = k
+                    break
+            if not key:
+                return
+            preset = translator.PROVIDERS[key]
+            # 仅在用户未手动改过时填充
+            if not self._llm_base_var.get().strip():
+                self._llm_base_var.set(preset["base_url"])
+            if not self._llm_model_var.get().strip():
+                self._llm_model_var.set(preset["model"])
+        self._llm_provider_cb.bind("<<ComboboxSelected>>", _on_provider_select)
+        # 初始按当前 provider 填充默认（combobox 未显示 label 前，直接用 key 填充）
+        if cur_provider in translator.PROVIDERS:
+            preset = translator.PROVIDERS[cur_provider]
+            if not self._llm_base_var.get().strip():
+                self._llm_base_var.set(preset["base_url"])
+            if not self._llm_model_var.get().strip():
+                self._llm_model_var.set(preset["model"])
+        # 同步 combobox 显示
+        cur_label = translator.PROVIDERS.get(cur_provider, translator.PROVIDERS["custom"])["label"]
+        self._llm_provider_cb.set(cur_label)
+
+        # 测试连接 / 保存 / 关闭
+        btn_row = tk.Frame(form, bg=COLORS["bg_page"])
+        btn_row.pack(fill=tk.X, pady=(16, 0))
+        self._llm_test_result = tk.StringVar(value="")
+        test_btn = ModernButton(btn_row, text="🔌 测试连接", variant="secondary", height=32,
+                                command=lambda: self._test_llm_connection())
+        test_btn.pack(side=tk.LEFT)
+        save_btn = ModernButton(btn_row, text="保存", variant="primary", height=32,
+                                command=lambda: self._save_llm_config(win))
+        save_btn.pack(side=tk.LEFT, padx=(10, 0))
+        close_btn = ModernButton(btn_row, text="关闭", variant="secondary", height=32,
+                                 command=win.destroy)
+        close_btn.pack(side=tk.LEFT, padx=(10, 0))
+        tk.Label(form, textvariable=self._llm_test_result, font=FONT_CAPTION,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"],
+                 wraplength=380, justify=tk.LEFT).pack(fill=tk.X, pady=(12, 0))
+
+        tip = ("提示：\n"
+               "· 千问/智谱/DeepSeek/Kimi 直接用官方 API Key 即可，无需额外配置\n"
+               "· 豆包（火山方舟）Model 需填「推理接入点 ID」（ep-开头的接入点）\n"
+               "· MiniMax 使用 OpenAI 兼容层；旧版需在厂商侧申请兼容访问\n"
+               "· 各厂商 Model 下拉后自动填充，可按需修改")
+        tk.Label(form, text=tip, font=FONT_CAPTION, fg=COLORS["text_hint"],
+                 bg=COLORS["bg_page"], justify=tk.LEFT, wraplength=380).pack(fill=tk.X, pady=(10, 0))
+
+        try:
+            win.update_idletasks()
+            win.geometry("540x540")
+            win.update_idletasks()
+        except Exception:
+            pass
+        try:
+            win.lift()
+        except Exception:
+            pass
+        win.grab_set()
+
+    def _test_llm_connection(self):
+        """测试 LLM API 连接。"""
+        from core import translator
+        self._llm_test_result.set("正在测试...")
+        key = self._llm_key_var.get().strip()
+        base = self._llm_base_var.get().strip()
+        model = self._llm_model_var.get().strip()
+
+        def _work():
+            ok, msg = translator.test_api_connection(api_key=key, base_url=base, model=model)
+            self.root.after(0, lambda: self._llm_test_result.set(("✓ " if ok else "✗ ") + msg))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _save_llm_config(self, win):
+        """保存 LLM 配置到 .env + app_config。"""
+        from core import translator
+        label = self._llm_provider_cb.get()
+        provider = "deepseek"
+        for k, p in translator.PROVIDERS.items():
+            if p["label"] == label:
+                provider = k
+                break
+        key = self._llm_key_var.get().strip()
+        base = self._llm_base_var.get().strip()
+        model = self._llm_model_var.get().strip()
+        try:
+            translator.save_env_config(provider, key, base, model)
+            messagebox.showinfo("已保存", "LLM API 配置已保存。", parent=win)
+            win.destroy()
+        except Exception as e:
+            messagebox.showerror("保存失败", f"LLM 配置保存失败：{e}", parent=win)
+
+    def _on_pdf_cfg_changed(self):
+        from core.pdf_config import save_pdf_config
+        try:
+            save_pdf_config({
+                "pdf_dir": self._pdf_dir_var.get().strip() or os.path.expanduser("~/Downloads/HONGXUN-PDF"),
+                "enable_scihub": bool(self._scihub_toggle.get()),
+                "unpaywall_email": "691678079@qq.com",
+            })
+            self._show_toast("PDF 设置已保存")
+        except Exception as e:
+            messagebox.showerror("保存失败", f"PDF 设置保存失败：{e}")
+
+    def _on_scihub_toggle(self):
+        """Sci-Hub 增强开关：开启需激活 + 阅读风险提示并确认。"""
+        from core.pdf_config import load_pdf_config, save_pdf_config
+        new_state = bool(self._scihub_toggle.get())
+        # 关闭 → 直接保存
+        if not new_state:
+            self._on_pdf_cfg_changed()
+            return
+        # 开启前先检查激活状态
+        if not coupon_manager.is_in_validity():
+            self._scihub_toggle.set(False)
+            self._require_activation("Sci-Hub 增强")
+            return
+        # 开启 → 弹风险提示，要求阅读 5s 后才能确认
+        cfg = load_pdf_config()
+        win = tk.Toplevel(self.root)
+        win.title("启用 Sci-Hub 增强")
+        win.transient(self.root)
+        win.resizable(False, False)
+        win.configure(bg=COLORS["bg_page"])
+
+        tk.Label(win, text="⚠ Sci-Hub 版权风险提示", font=FONT_HEADING,
+                 fg=COLORS["danger"], bg=COLORS["bg_page"]).pack(pady=(20, 10))
+        msg = ("Sci-Hub 通过非官方渠道提供付费论文 PDF，\n"
+               "下载受版权保护的文献可能违反当地法律法规，\n"
+               "也可能带来网络安全风险。\n\n"
+               "请确认你了解并愿意自行承担相关风险。")
+        tk.Label(win, text=msg, font=FONT_CAPTION, fg=COLORS["text_body"],
+                 bg=COLORS["bg_page"], justify=tk.LEFT).pack(padx=48, pady=(0, 16))
+
+
+        # 计算加宽 20% 的按钮宽度：先按默认 pad_x 得自然宽度，再乘 1.2
+        _probe = ModernButton(win, text="我已阅读风险提示（5 秒后可确认）",
+                              variant="primary", height=36, pad_x=20)
+        _scihub_btn_w = int(_probe._width * 1.2)
+        _probe.destroy()
+        self._scihub_agree_btn = ModernButton(win, text="我已阅读风险提示（5 秒后可确认）",
+                                              variant="primary", height=36, width=_scihub_btn_w,
+                                              command=lambda: self._confirm_scihub(win))
+        self._scihub_agree_btn.pack(pady=(4, 6))
+        self._scihub_agree_btn.set_enabled(False)  # 初始灰色不可点
+        tk.Label(win, text="建议使用机构合法途径获取文献", font=FONT_CAPTION,
+                 fg=COLORS["text_hint"], bg=COLORS["bg_page"]).pack(pady=(0, 14))
+
+        self._scihub_countdown = 5
+        self._scihub_after = win.after(1000, lambda: self._scihub_tick(win))
+        win.protocol("WM_DELETE_WINDOW", lambda: self._cancel_scihub(win))
+
+        # 确保弹窗尺寸生效（geometry 在子组件全部 pack 后再设置，
+        # 否则可能被 pack 的默认尺寸覆盖成 1x1）
+        try:
+            win.update_idletasks()
+            win.geometry("480x300")
+            win.update_idletasks()
+        except Exception:
+            pass
+        try:
+            win.lift()
+        except Exception:
+            pass
+
+    def _scihub_tick(self, win):
+        """风险提示 5s 倒计时。"""
+        if not win.winfo_exists():
+            return
+        self._scihub_countdown -= 1
+        if self._scihub_countdown <= 0:
+            self._scihub_agree_btn.set_enabled(True)  # 倒计时结束变蓝可点
+            self._scihub_agree_btn.set_text("我已阅读风险提示，确认启用", resize=False)
+        else:
+            self._scihub_agree_btn.set_enabled(False)
+            self._scihub_agree_btn.set_text(
+                f"我已阅读风险提示（{self._scihub_countdown} 秒后可确认）",
+                resize=False)
+            self._scihub_after = win.after(1000, lambda: self._scihub_tick(win))
+
+    def _confirm_scihub(self, win):
+        """确认启用 Sci-Hub，并让开关保持开启。"""
+        try:
+            if self._scihub_after:
+                win.after_cancel(self._scihub_after)
+        except Exception:
+            pass
+        try:
+            win.destroy()
+        except Exception:
+            pass
+        self._scihub_toggle.set(True)
+        self._on_pdf_cfg_changed()
+
+    def _cancel_scihub(self, win):
+        """取消启用 Sci-Hub：开关回退为关闭，不保存。"""
+        try:
+            if self._scihub_after:
+                win.after_cancel(self._scihub_after)
+        except Exception:
+            pass
+        try:
+            win.destroy()
+        except Exception:
+            pass
+        self._scihub_toggle.set(False)
+
+    def _download_paper_pdf(self, paper: dict, reopen: bool = False):
+        """下载论文 PDF（多来源回退），或打开已下载的 PDF。"""
+        from core.pdf_config import load_pdf_config
+        from core import pdf_fetcher
+        from core.library import update_paper_pdf
+
+        paper_id = paper.get("id") or ""
+        if not paper_id:
+            messagebox.showwarning("提示", "无法定位论文")
+            return
+
+        # 已下载 → 直接打开
+        if reopen:
+            path = paper.get("pdf_path") or ""
+            if path and os.path.exists(path):
+                if pdf_fetcher.open_pdf(path):
+                    return
+                messagebox.showerror("打开失败", f"无法打开 PDF 文件：\n{path}")
+            else:
+                messagebox.showwarning("提示", "PDF 文件已不存在，请重新下载")
+            return
+
+        cfg = load_pdf_config()
+        dest_dir = cfg.get("pdf_dir") or os.path.expanduser("~/Downloads/HONGXUN-PDF")
+
+        # 进度窗口
+        progress_win = tk.Toplevel(self.root)
+        progress_win.title("下载 PDF")
+        progress_win.geometry("420x130")
+        progress_win.transient(self.root)
+        progress_win.resizable(False, False)
+        progress_win.configure(bg=COLORS["bg_page"])
+
+        title = (paper.get("title") or "论文")[:40]
+        tk.Label(progress_win, text=f"正在下载：{title}",
+                 font=FONT_BODY, bg=COLORS["bg_page"],
+                 fg=COLORS["text_body"], wraplength=380).pack(pady=(16, 8))
+        pb = ttk.Progressbar(progress_win, mode='determinate',
+                             style="Horizontal.TProgressbar")
+        pb.pack(fill=tk.X, padx=24, pady=8)
+        progress_win.update()
+
+        def progress_cb(received, total):
+            try:
+                pct = int(received / total * 100)
+                pb["value"] = pct
+                progress_win.update()
+            except Exception:
+                pass
+
+        def _do_download():
+            try:
+                result = pdf_fetcher.fetch_pdf_url(
+                    paper.get("doi", ""), paper.get("title", ""), cfg)
+                if not result:
+                    self.root.after(0, lambda: self._on_pdf_done(
+                        progress_win, None, None, paper_id,
+                        "未找到可下载的开放获取 PDF（合法来源均失败）"))
+                    return
+                dl = pdf_fetcher.download_pdf(
+                    result["pdf_url"], dest_dir, paper, progress_cb)
+                self.root.after(0, lambda: self._on_pdf_done(
+                    progress_win, dl.get("path"), result.get("source"),
+                    paper_id, None))
+            except pdf_fetcher.DownloadError as e:
+                self.root.after(0, lambda: self._on_pdf_done(
+                    progress_win, None, None, paper_id, str(e)))
+            except Exception as e:
+                self.root.after(0, lambda: self._on_pdf_done(
+                    progress_win, None, None, paper_id, f"下载异常：{e}"))
+
+        threading.Thread(target=_do_download, daemon=True).start()
+
+    def _on_pdf_done(self, win, path, source, paper_id, err_msg):
+        """下载完成回调（主线程）。path 非空 = 成功。"""
+        try:
+            if win.winfo_exists():
+                win.destroy()
+        except Exception:
+            pass
+        if path:
+            update_paper_pdf(paper_id, path, "ok")
+            src = f"（来源：{source}）" if source else ""
+            self._show_toast(f"PDF 下载完成 {src}")
+            if hasattr(self, 'library_view'):
+                self.library_view.refresh()
+            if messagebox.askyesno("下载完成",
+                                   f"PDF 已保存到：\n{path}\n\n是否立即打开？"):
+                pdf_fetcher.open_pdf(path)
+        else:
+            update_paper_pdf(paper_id, "", "failed")
+            messagebox.showerror("下载失败", err_msg or "未知错误")
 
     def _on_history_cancelled(self):
         """检索被用户取消"""
@@ -1296,7 +2128,53 @@ class PaperMonitorApp:
         self._progress_idle.pack(side=tk.BOTTOM, fill=tk.X)
         self._cancel_search_btn.pack_forget()
         self.status_var.set(f"{ICONS['error']} 检索出错")
+
+        # 识别 LLM 翻译失败（TranslationError），走专门弹窗
+        if isinstance(error_msg, BaseException) or "API Key" in str(error_msg) or \
+                str(error_msg).startswith("API 错误") or "翻译" in str(error_msg):
+            self._show_llm_error_dialog(str(error_msg))
+            return
         self._show_toast(f"{ICONS['error']} 检索失败: {error_msg[:60]}", duration=5)
+
+    def _show_llm_error_dialog(self, reason):
+        """LLM API 失败弹窗：提示原因，提供「关闭翻译」/「稍后重试」。"""
+        from core.translator import TranslationError
+        from core import translator
+        code = ""
+        if isinstance(reason, BaseException):
+            if isinstance(reason, TranslationError):
+                code = reason.code
+                reason = reason.detail
+            else:
+                reason = str(reason)
+        reason = str(reason)
+
+        # 尝试关闭翻译功能（用户确认后）
+        def _disable_translate():
+            cfg = load_app_config()
+            cfg["translate_enabled"] = False
+            save_app_config(cfg)
+            try:
+                if self._ai_translate_toggle is not None:
+                    self._ai_translate_toggle.set(False)
+            except Exception:
+                pass
+            self.status_var.set("AI 翻译已关闭")
+
+        ret = messagebox.askyesnocancel(
+            "AI 翻译失败",
+            f"LLM 大模型 API 调用失败：\n\n{reason}\n\n"
+            f"可能是 API Key 无效/被删除，或账户欠费/配额用尽。\n\n"
+            f"「是」→ 关闭 AI 翻译并继续检索（跳过翻译）\n"
+            f"「否」→ 保持翻译开启，稍后重试\n"
+            f"「取消」→ 本次任务中止")
+        if ret is True:
+            _disable_translate()
+            self._show_toast("AI 翻译已关闭，可重新执行检索")
+        elif ret is False:
+            self._show_toast("AI 翻译保持开启，请检查 API 配置")
+        else:
+            self.status_var.set("检索已中止（AI 翻译失败）")
 
     def _cancel_current_search(self):
         """取消当前正在执行的检索任务"""
@@ -1621,14 +2499,10 @@ class PaperMonitorApp:
                                 self._open_unsent_folder()
                                 fail_dialog.destroy()
 
-                            tk.Button(btn_fail_frame, text=" 打开文件夹 ",
-                                      font=FONT_BODY, bg=COLORS["primary"], fg="white",
-                                      relief="flat", padx=16, pady=4, cursor="hand2",
-                                      command=_open_and_close).pack(side=tk.LEFT, padx=6)
-                            tk.Button(btn_fail_frame, text=" 知道了 ",
-                                      font=FONT_BODY, bg=COLORS["bg_card"], fg=COLORS["text_body"],
-                                      relief="flat", padx=16, pady=4, cursor="hand2",
-                                      command=fail_dialog.destroy).pack(side=tk.LEFT, padx=6)
+                            ModernButton(btn_fail_frame, text=" 打开文件夹 ", variant="primary",
+                                         command=_open_and_close).pack(side=tk.LEFT, padx=6)
+                            ModernButton(btn_fail_frame, text=" 知道了 ", variant="secondary",
+                                         command=fail_dialog.destroy).pack(side=tk.LEFT, padx=6)
 
                             fail_dialog.update_idletasks()
                             pw, ph = 380, 200
@@ -1710,6 +2584,17 @@ class PaperMonitorApp:
 
         self._scheduler_daemon_running = False
 
+    def _on_push_time_changed(self):
+        """用户选择新的每日推送时间，保存到 app_config。"""
+        try:
+            cfg = load_app_config()
+            cfg["push_time"] = self._push_time_var.get() or "08:00"
+            save_app_config(cfg)
+            self._push_time_label.configure(text=f"每日 {cfg['push_time']}")
+            self._show_toast(f"推送时间已设为 {cfg['push_time']}（重启推送后生效）")
+        except Exception as e:
+            messagebox.showerror("保存失败", f"推送时间保存失败：{e}")
+
     def _toggle_scheduler(self):
         """切换每日推送开/关（启动或停止外部守护进程）"""
         if not self._scheduler_daemon_running:
@@ -1754,13 +2639,16 @@ class PaperMonitorApp:
         if running:
             self._push_status_indicator.configure(text="●", fg=COLORS["success"])
             self._push_status_text.configure(text="每日推送运行中", fg=COLORS["success"])
-            self._push_toggle_btn.configure(text="暂停推送", style="Danger.TButton")
+            self._push_toggle_btn.set_text("暂停推送", variant="danger")
             # 刷新统计数据
             self._update_push_stats()
         else:
             self._push_status_indicator.configure(text="○", fg=COLORS["dot_off"])
             self._push_status_text.configure(text="每日推送未启动", fg=COLORS["text_body"])
-            self._push_toggle_btn.configure(text="启动每日推送", style="Primary.TButton")
+            self._push_toggle_btn.set_text("启动每日推送", variant="primary")
+        # 同步侧栏底部推送状态
+        if hasattr(self, 'sidebar'):
+            self.sidebar.set_push_status(running)
 
     def _update_push_stats(self):
         """从推送记录计算统计信息"""
@@ -1778,8 +2666,10 @@ class PaperMonitorApp:
         self._push_total_label.configure(text=f"{len(all_dois)} 篇")
 
     def _require_activation(self, feature_name: str) -> bool:
-        """检查是否已激活，未激活则弹出引导。返回是否已激活。"""
-        if self._is_activated_cached():
+        """检查是否已激活，未激活则弹出引导（引导订阅付费）。返回是否已激活。"""
+        # 用统一有效期检测（试用 / 礼品券 / 订阅 / 宽限）
+        if coupon_manager.is_in_validity():
+            self._activation_cache = True
             return True
 
         # 检查试用期是否刚到期
@@ -1794,17 +2684,17 @@ class PaperMonitorApp:
         result = [False]
         dialog = tk.Toplevel(self.root)
         dialog.withdraw()
-        dialog.title("激活提示")
+        dialog.title("功能激活")
         dialog.resizable(True, True)
         dialog.transient(self.root)
         dialog.configure(bg=COLORS["bg_page"])
 
         if trial_over:
             heading = f"🔒 「{feature_name}」试用已到期"
-            desc = "14 天免费试用已结束，请使用礼品券激活服务后继续使用。"
+            desc = "7 天免费试用已结束，开通订阅即可继续使用此功能。"
         else:
             heading = f"🔒 「{feature_name}」需要激活"
-            desc = "请使用礼品券激活服务后再使用此功能。"
+            desc = "开通订阅服务后即可使用此功能。"
 
         tk.Label(dialog, text=heading,
                  font=FONT_HEADING, fg=COLORS["text_title"],
@@ -1823,29 +2713,16 @@ class PaperMonitorApp:
             result[0] = False
             dialog.destroy()
 
-        # 两个按钮蓝底黑字
-        tk.Button(btn_frame, text="  现在激活  ",
-                  font=FONT_BODY,
-                  bg=COLORS["primary"], fg="black",
-                  relief="flat", padx=20, pady=6,
-                  cursor="hand2",
-                  activebackground=COLORS["primary_hover"],
-                  activeforeground="black",
-                  command=on_now).pack(side=tk.LEFT, padx=8)
-
-        tk.Button(btn_frame, text="  稍后激活  ",
-                  font=FONT_BODY,
-                  bg=COLORS["primary"], fg="black",
-                  relief="flat", padx=20, pady=6,
-                  cursor="hand2",
-                  activebackground=COLORS["primary_hover"],
-                  activeforeground="black",
-                  command=on_later).pack(side=tk.LEFT, padx=8)
+        # 立即订阅（主按钮）→ 打开订阅付费弹窗
+        ModernButton(btn_frame, text="  💳 立即订阅  ", variant="primary",
+                     command=on_now).pack(side=tk.LEFT, padx=8)
+        ModernButton(btn_frame, text="  稍后再说  ", variant="secondary",
+                     command=on_later).pack(side=tk.LEFT, padx=8)
 
         # 全部构建完成后才显示
         dialog.update_idletasks()
-        dialog.geometry("420x200")
-        x = self.root.winfo_x() + (self.root.winfo_width() - 420) // 2
+        dialog.geometry("440x200")
+        x = self.root.winfo_x() + (self.root.winfo_width() - 440) // 2
         y = self.root.winfo_y() + (self.root.winfo_height() - 200) // 2
         dialog.geometry(f"+{x}+{y}")
         dialog.grab_set()
@@ -1854,9 +2731,315 @@ class PaperMonitorApp:
         self.root.wait_window(dialog)
 
         if result[0]:
-            self._redeem_coupon_dialog()
+            self._open_subscription_dialog()
             return self._is_activated_cached()
         return False
+
+    def _open_subscription_dialog(self):
+        """订阅付费弹窗：4 档横向套餐卡片（彩色渐变+悬浮）+ 二维码 + 轮询支付。"""
+        from core import subscription
+
+        win = tk.Toplevel(self.root)
+        win.title("开通订阅")
+        win.transient(self.root)
+        win.resizable(False, False)
+        win.configure(bg=COLORS["bg_page"])
+        win.attributes("-topmost", True)
+
+        # ── 顶部横幅（渐变 + 醒目文案）──
+        banner = tk.Canvas(win, height=92, highlightthickness=0, bd=0)
+        banner.pack(fill=tk.X)
+        try:
+            banner.create_rectangle(0, 0, 900, 92, fill=COLORS["primary"],
+                                    outline="")
+            # 渐变效果（多色带模拟）
+            for i in range(60):
+                ratio = i / 60.0
+                color = lerp_color("#3B82F6", "#8B5CF6", ratio)
+                banner.create_rectangle(0, 0, 900, 92,
+                                        fill=color, outline="")
+            banner.create_rectangle(0, 0, 900, 92, fill="", outline="")
+        except Exception:
+            banner.create_rectangle(0, 0, 900, 92, fill="#3B82F6", outline="")
+        banner.create_text(450, 30, text="💳 开通订阅 · 畅享全部功能",
+                           font=(_ui_font_family(), 22, "bold"),
+                           fill="#FFFFFF", anchor=tk.CENTER)
+        banner.create_text(450, 62, text="每日推送 · 邮箱设置 · AI 翻译 · Sci-Hub 增强",
+                           font=(_ui_font_family(), 12),
+                           fill="#E0E7FF", anchor=tk.CENTER)
+
+        # ── 套餐卡片区（4 张横向一排）──
+        plans_frame = tk.Frame(win, bg=COLORS["bg_page"])
+        plans_frame.pack(padx=28, pady=(20, 6))
+        self._sub_plan_var = tk.StringVar(value=subscription.DEFAULT_PLAN)
+        self._sub_plan_cards = {}
+
+        # 每档卡片主题色（丰富配色吸引眼球）
+        plan_colors = {
+            "3M":   {"top": "#F59E0B", "bottom": "#F97316"},   # 橙金
+            "6M":   {"top": "#10B981", "bottom": "#059669"},   # 翡翠绿
+            "12M":  {"top": "#3B82F6", "bottom": "#2563EB"},   # 蓝（默认选中）
+            "24M":  {"top": "#8B5CF6", "bottom": "#7C3AED"},   # 紫
+        }
+
+        plan_keys = list(subscription.PLANS.keys())
+        for idx, key in enumerate(plan_keys):
+            p = subscription.PLANS[key]
+            pc = plan_colors.get(key, {"top": "#3B82F6", "bottom": "#2563EB"})
+
+            card = tk.Canvas(plans_frame, width=172, height=178,
+                             highlightthickness=0, bd=0,
+                             bg=COLORS["bg_page"], cursor="hand2")
+            card.grid(row=0, column=idx, padx=7)
+            card._plan_key = key
+
+            # 给卡片 Canvas 添加圆角矩形绘制方法
+            def _create_rounded_rect_poly(c, x1, y1, x2, y2, r, **kwargs):
+                pts = [
+                    x1 + r, y1, x2 - r, y1, x2, y1,
+                    x2, y1 + r, x2, y2 - r, x2, y2,
+                    x2 - r, y2, x1 + r, y2, x1, y2,
+                    x1, y2 - r, x1, y1 + r, x1, y1,
+                ]
+                return c.create_polygon(pts, smooth=True, **kwargs)
+            card.create_rounded_rect_poly = lambda *a, **k: _create_rounded_rect_poly(card, *a, **k)
+
+            # 绘制卡片（渐变底色 + 内容）
+            def _draw_card(c=card, key=key, p=p, pc=pc, selected=False, hovered=False):
+                c.delete("all")
+                w, h = 172, 178
+                # 悬浮/选中：上浮 + 阴影
+                lift = 6 if (selected or hovered) else 0
+                # 底部阴影
+                if selected or hovered:
+                    c.create_rounded_rect_poly(6, h - 10, w - 6, h + 8, 14,
+                                               fill="#CBD5E1", outline="")
+                # 渐变主体（逐行渐变，垂直）
+                top, bottom = pc["top"], pc["bottom"]
+                for yy in range(h - lift):
+                    ratio = yy / float(h)
+                    col = lerp_color(top, bottom, ratio)
+                    c.create_rectangle(2, lift + yy, w - 2, lift + yy + 1,
+                                       fill=col, outline="")
+                # 选中：外发光边框
+                border_w = 3 if selected else 1
+                border_col = "#FFFFFF" if selected else "#FFFFFF"
+                c.create_rounded_rect_poly(1, lift + 1, w - 1, lift + h - 1, 14,
+                                           fill="", outline=border_col, width=border_w)
+
+                # 有效期（大标题）
+                c.create_text(w / 2, lift + 24, text=p["label"],
+                              font=(_ui_font_family(), 16, "bold"),
+                              fill="#FFFFFF", anchor=tk.CENTER)
+                # 折扣（最大，红色，有质感）
+                c.create_text(w / 2, lift + 52, text=p["discount"],
+                              font=(_ui_font_family(), 22, "bold"),
+                              fill="#FECACA", anchor=tk.CENTER)
+                # 原价（灰色 + 删除线）
+                c.create_text(w / 2, lift + 78, text=f"¥{p['origin_price']}",
+                              font=(_ui_font_family(), 14),
+                              fill="#E2E8F0", anchor=tk.CENTER)
+                # 删除线（在原价文字中间）
+                c.create_line(w / 2 - 34, lift + 82, w / 2 + 34, lift + 82,
+                              fill="#FCA5A5", width=2)
+                # 现价（黑色 + 大字）
+                c.create_text(w / 2, lift + 108, text=f"¥{p['price']}",
+                              font=(_ui_font_family(), 24, "bold"),
+                              fill="#FFFFFF", anchor=tk.CENTER)
+                # 每天折合（小字黑色）
+                c.create_text(w / 2, lift + 138, text=f"每天折合 ¥{p['daily']}",
+                              font=(_ui_font_family(), 11),
+                              fill="#F1F5F9", anchor=tk.CENTER)
+                # 推荐角标（12M 默认）
+                if key == subscription.DEFAULT_PLAN and not selected:
+                    c.create_text(w - 16, lift + 12, text="推荐",
+                                  font=(_ui_font_family(), 9, "bold"),
+                                  fill="#FEF3C7", anchor=tk.CENTER)
+
+            # 选中/悬浮状态
+            card._selected = (key == subscription.DEFAULT_PLAN)
+            card._hovered = False
+
+            def _redraw(c=card):
+                _draw_card(c, c._plan_key, subscription.PLANS[c._plan_key],
+                           plan_colors.get(c._plan_key, {"top": "#3B82F6", "bottom": "#2563EB"}),
+                           selected=c._selected, hovered=c._hovered)
+
+            def _select(c=card):
+                # 清除其他卡片选中态
+                for k, cc in self._sub_plan_cards.items():
+                    cc._selected = False
+                c._selected = True
+                for k, cc in self._sub_plan_cards.items():
+                    cc._redraw()
+                self._sub_plan_var.set(c._plan_key)
+                self._sub_selected_label.configure(
+                    text=f"已选：{subscription.PLANS[c._plan_key]['label']} · "
+                         f"¥{subscription.PLANS[c._plan_key]['price']}")
+
+            def _on_hover(e, c=card):
+                c._hovered = True
+                c._redraw()
+
+            def _on_leave(e, c=card):
+                c._hovered = False
+                c._redraw()
+
+            def _on_click(e, c=card):
+                _select(c)
+
+            card._redraw = _redraw
+            card._redraw()
+            card.bind("<Enter>", _on_hover)
+            card.bind("<Leave>", _on_leave)
+            card.bind("<Button-1>", _on_click)
+            self._sub_plan_cards[key] = card
+
+        # 需在卡片创建后才有此引用，用于显示选中套餐（独立 frame，避免与 grid 冲突）
+        sel_row = tk.Frame(win, bg=COLORS["bg_page"])
+        sel_row.pack(pady=(4, 0))
+        self._sub_selected_label = tk.Label(sel_row, text="", font=FONT_LABEL,
+                                            fg=COLORS["text_body"], bg=COLORS["bg_page"])
+
+        # 二维码区（默认隐藏，点「立即支付」后显示）
+        self._sub_qr_frame = tk.Frame(win, bg=COLORS["bg_page"])
+
+        # 二维码容器（白色圆角边框）
+        self._sub_qr_canvas = tk.Canvas(self._sub_qr_frame, width=200, height=200,
+                                        highlightthickness=0, bd=0, bg="#FFFFFF")
+
+        # 二维码下方的套餐/金额说明
+        self._sub_qr_plan_label = tk.Label(self._sub_qr_frame, text="", font=FONT_BODY_BOLD,
+                                           fg=COLORS["text_title"], bg=COLORS["bg_page"])
+
+        self._sub_status_label = tk.Label(self._sub_qr_frame, text="",
+                                          font=FONT_CAPTION, fg=COLORS["text_secondary"],
+                                          bg=COLORS["bg_page"])
+
+        btn_row = tk.Frame(win, bg=COLORS["bg_page"])
+        btn_row.pack(pady=(12, 20))
+        ModernButton(btn_row, text="立即支付", variant="primary", height=40,
+                     command=lambda: self._start_sub_payment(win)).pack(side=tk.LEFT, padx=6)
+        ModernButton(btn_row, text="关闭", variant="secondary", height=40,
+                     command=win.destroy).pack(side=tk.LEFT, padx=6)
+
+        # 初始选中默认套餐（二维码不显示，待点击支付后出现）
+        self._sub_plan_cards[subscription.DEFAULT_PLAN]._selected = True
+        for k, c in self._sub_plan_cards.items():
+            c._redraw()
+        self._sub_selected_label.configure(
+            text=f"已选：{subscription.PLANS[subscription.DEFAULT_PLAN]['label']} · "
+                 f"¥{subscription.PLANS[subscription.DEFAULT_PLAN]['price']}")
+        self._sub_selected_label.pack(anchor=tk.CENTER, pady=(2, 0))
+
+        try:
+            win.update_idletasks()
+            # 宽度增加 30%（原 728 → 946），高度增加 10%（原 640 → 704）
+            win.geometry("946x704")
+            win.update_idletasks()
+        except Exception:
+            pass
+        try:
+            win.lift()
+        except Exception:
+            pass
+        win.grab_set()
+
+    def _show_sub_qr(self):
+        """点「立即支付」后显示二维码区并生成占位二维码。"""
+        from core import subscription
+        self._sub_qr_frame.pack(pady=(4, 4))
+        self._sub_qr_canvas.pack()
+        self._sub_qr_plan_label.pack(pady=(8, 0))
+        self._sub_status_label.pack(pady=(4, 0))
+        self._render_mock_qr()
+
+    def _render_mock_qr(self):
+        """绘制占位二维码图案（虚假二维码），下方标注套餐与金额。"""
+        try:
+            from core import subscription
+            plan = self._sub_plan_var.get()
+            p = subscription.PLANS[plan]
+            order = subscription.create_order(plan)
+            qr_text = order["qr_content"]
+            self._sub_qr_canvas.delete("all")
+            w, h = 200, 200
+            # 白色底
+            self._sub_qr_canvas.create_rectangle(0, 0, w, h, fill="#FFFFFF", outline="")
+            # 生成伪随机点阵（模拟二维码）
+            import hashlib
+            seed = int(hashlib.md5(qr_text.encode()).hexdigest()[:8], 16)
+            import random
+            random.seed(seed)
+            cell = 9
+            for y in range(24, h - 24, cell):
+                for x in range(24, w - 24, cell):
+                    if random.random() < 0.45:
+                        self._sub_qr_canvas.create_rectangle(x, y, x + cell, y + cell,
+                                                             fill="#1E293B", outline="")
+            # 三个定位角
+            for ox, oy in [(8, 8), (w - 48, 8), (8, h - 48)]:
+                self._sub_qr_canvas.create_rectangle(ox, oy, ox + 40, oy + 40, fill="#1E293B", outline="")
+                self._sub_qr_canvas.create_rectangle(ox + 8, oy + 8, ox + 32, oy + 32, fill="#FFFFFF", outline="")
+                self._sub_qr_canvas.create_rectangle(ox + 16, oy + 16, ox + 24, oy + 24, fill="#1E293B", outline="")
+            # 二维码下方标注
+            self._sub_qr_plan_label.configure(
+                text=f"{p['label']} · ¥{p['price']} · 到期自动续费前可用 {p['days']} 天")
+        except Exception:
+            self._sub_qr_canvas.create_text(100, 100, text="（二维码占位）",
+                                            fill="#64748B")
+
+    def _start_sub_payment(self, win):
+        """开始支付流程：显示二维码 → 生成订单 → 轮询查询 → 支付成功激活。"""
+        from core import subscription
+        plan = self._sub_plan_var.get()
+        p = subscription.PLANS[plan]
+
+        # 点击支付后显示二维码
+        self._show_sub_qr()
+
+        # 重新生成订单（覆盖占位二维码）
+        self._sub_status_label.configure(text=f"订单生成中 · {p['label']} ¥{p['price']} ...")
+        try:
+            order = subscription.create_order(plan)
+        except Exception as e:
+            self._sub_status_label.configure(text=f"下单失败：{e}")
+            return
+        order_id = order["order_id"]
+        self._sub_status_label.configure(
+            text=f"请使用微信/支付宝扫码支付 ¥{p['price']}（演示：约 5 秒自动完成）")
+
+        def _poll():
+            if not win.winfo_exists():
+                return
+            try:
+                status = subscription.query_order(order_id)
+            except Exception:
+                status = "pending"
+            if status == "paid":
+                ok = subscription.activate_subscription(plan)
+                self._sub_status_label.configure(
+                    text="✓ 支付成功，订阅已开通！" if ok else "激活失败，请重试")
+                if ok:
+                    from core.config_manager import load_app_config, save_app_config
+                    cfg = load_app_config()
+                    cfg["translate_enabled"] = True
+                    save_app_config(cfg)
+                    try:
+                        if self._ai_translate_toggle is not None:
+                            self._ai_translate_toggle.set(True)
+                    except Exception:
+                        pass
+                    self._invalidate_activation_cache()
+                    self._update_license_status()
+                    win.after(1500, win.destroy)
+                return
+            elif status == "failed":
+                self._sub_status_label.configure(text="支付失败，请重试")
+                return
+            win.after(2000, _poll)
+
+        _poll()
 
     # ===================== 意见反馈 =====================
 
@@ -1946,8 +3129,8 @@ class PaperMonitorApp:
             names = [os.path.basename(p) for p in attachments]
             attach_label.configure(text=f"附件：{', '.join(names)}", foreground=COLORS["text_body"])
 
-        ttk.Button(attach_frame, text="添加附件",
-                   style="Secondary.TButton", command=_add_attachment).pack(side=tk.RIGHT)
+        ModernButton(attach_frame, text="添加附件", variant="secondary",
+                     command=_add_attachment).pack(side=tk.RIGHT)
 
         ttk.Label(fb, text="支持上传 500KB 以内的图片或 1MB 以内的 PDF 文件",
                   foreground=COLORS["text_secondary"],
@@ -1957,14 +3140,8 @@ class PaperMonitorApp:
         email_row.pack(fill=tk.X, padx=16, pady=6)
         ttk.Label(email_row, text="您的邮箱：", font=FONT_BODY).pack(side=tk.LEFT)
         email_var = tk.StringVar()
-        email_entry = tk.Entry(email_row, textvariable=email_var, width=30,
-                               font=FONT_BODY,
-                               insertbackground=COLORS["text_body"],
-                               selectbackground=COLORS["primary_light"],
-                               selectforeground=COLORS["primary_active"],
-                               bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                               relief="solid", bd=1)
-        email_entry.pack(side=tk.LEFT, padx=(10, 0))
+        email_entry = ModernEntry(email_row, textvariable=email_var, placeholder="you@example.com")
+        email_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
 
         def _validate_email(email):
             return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email) is not None
@@ -2028,10 +3205,10 @@ class PaperMonitorApp:
 
         btn_fb = ttk.Frame(fb)
         btn_fb.pack(pady=16)
-        ttk.Button(btn_fb, text="发送反馈", style="Primary.TButton",
-                   command=_send_feedback).pack(side=tk.LEFT, padx=10)
-        ttk.Button(btn_fb, text="取消", style="Secondary.TButton",
-                   command=fb.destroy).pack(side=tk.LEFT, padx=10)
+        ModernButton(btn_fb, text="发送反馈", variant="primary",
+                     command=_send_feedback).pack(side=tk.LEFT, padx=10)
+        ModernButton(btn_fb, text="取消", variant="secondary",
+                     command=fb.destroy).pack(side=tk.LEFT, padx=10)
 
     # ===================== 邮箱配置（升级版） =====================
 
@@ -2169,30 +3346,78 @@ class PaperMonitorApp:
             receivers = [cfg["receiver"].strip()]
 
     def _update_license_status(self):
-        """更新邮件许可状态显示"""
-        # 区分：礼品券激活 vs 试用期
-        if coupon_manager.is_activated():
-            remaining = coupon_manager.get_remaining_days()
-            if remaining >= 99999:
-                status_text = f"{ICONS['check']} ✓ 邮件推送服务已永久激活（礼品券兑换）"
-            else:
-                status_text = f"{ICONS['check']} ✓ 邮件推送服务已激活（礼品券兑换）"
-                if remaining > 0:
-                    status_text += f" · 剩余{remaining}天"
-            self._license_status_label.configure(
-                text=status_text, fg=COLORS["success"])
-        elif self._is_activated_cached():
-            # 处于 14 天试用期
+        """更新许可状态显示（订阅/礼品券/试用，含具体到期日期）"""
+        info = coupon_manager.get_expiry_info()
+        active = info.get("active", False) or coupon_manager.is_in_validity()
+        source = info.get("source", "")
+        expires_at = info.get("expires_at", "")
+        permanent = info.get("permanent", False)
+        in_grace = info.get("in_grace", False)
+
+        def _expiry_suffix():
+            # 到期时间统一显示具体日期（YYYY-MM-DD）
+            if permanent:
+                return " · 永久"
+            if expires_at:
+                return f" · 到期 {expires_at[:10]}"
+            return ""
+
+        if active and permanent:
+            status_text = f"{ICONS['check']} ✓ 服务已永久激活（礼品券）"
+            self._license_status_label.configure(text=status_text, fg=COLORS["success"])
+        elif active and source == "subscription":
+            status_text = f"{ICONS['check']} ✓ 订阅已开通{_expiry_suffix()}"
+            if in_grace:
+                status_text += " · 宽限期"
+            self._license_status_label.configure(text=status_text, fg=COLORS["success"])
+        elif active and source and source != "unknown":
+            # 礼品券（非永久）
+            status_text = f"{ICONS['check']} ✓ 服务已激活（礼品券）{_expiry_suffix()}"
+            self._license_status_label.configure(text=status_text, fg=COLORS["success"])
+        elif active:
+            # 试用期
             _, remaining_days = coupon_manager.is_trial_period()
-            status_text = f"{ICONS['check']} ✓ 邮件推送服务试用中（免费试用14天）"
+            status_text = f"{ICONS['check']} ✓ 邮件推送服务试用中（免费试用7天）"
             if remaining_days > 0:
                 status_text += f" · 剩余{remaining_days}天"
-            self._license_status_label.configure(
-                text=status_text, fg=COLORS["success"])
+            self._license_status_label.configure(text=status_text, fg=COLORS["success"])
         else:
             self._license_status_label.configure(
-                text=f"{ICONS['warning']} ⚠ 邮件推送服务未激活，请使用礼品券兑换",
+                text=f"{ICONS['warning']} ⚠ 服务未激活，请开通订阅或兑换礼品券",
                 fg=COLORS["warning"])
+
+        # 同步概览页与设置页的激活状态/礼品券入口
+        self._refresh_license_widgets()
+
+    def _refresh_license_widgets(self):
+        """刷新概览页与设置页的激活状态/礼品券入口。"""
+        try:
+            activated = coupon_manager.is_activated()
+        except Exception:
+            return
+        # 设置页
+        if hasattr(self, '_settings_license_label'):
+            if activated:
+                self._settings_license_label.configure(
+                    text="✓ 服务已激活（永久）", fg=COLORS["success"])
+                self._settings_coupon_btn.set_text("✓ 已激活")
+                self._settings_coupon_btn.configure(state="disabled")
+            else:
+                try:
+                    in_trial, remain = coupon_manager.is_trial_period()
+                except Exception:
+                    in_trial, remain = False, 0
+                if in_trial:
+                    self._settings_license_label.configure(
+                        text=f"试用期剩余 {remain} 天", fg=COLORS["warning"])
+                else:
+                    self._settings_license_label.configure(
+                        text=f"⚠ 未激活，请兑换礼品券", fg=COLORS["warning"])
+                self._settings_coupon_btn.set_text("🎟 兑换礼品券")
+                self._settings_coupon_btn.configure(state="normal")
+        # 概览页
+        if hasattr(self, 'dashboard_view') and hasattr(self.dashboard_view, 'refresh_license'):
+            self.dashboard_view.refresh_license()
 
 
     # ===================== 未发送邮件重发 =====================
@@ -2332,14 +3557,10 @@ class PaperMonitorApp:
                 self._open_unsent_folder()
                 fail_dialog.destroy()
 
-            tk.Button(btn_fail_frame, text=" 打开文件夹 ",
-                      font=FONT_BODY, bg=COLORS["primary"], fg="white",
-                      relief="flat", padx=16, pady=4, cursor="hand2",
-                      command=_open_and_close).pack(side=tk.LEFT, padx=6)
-            tk.Button(btn_fail_frame, text=" 知道了 ",
-                      font=FONT_BODY, bg=COLORS["bg_card"], fg=COLORS["text_body"],
-                      relief="flat", padx=16, pady=4, cursor="hand2",
-                      command=fail_dialog.destroy).pack(side=tk.LEFT, padx=6)
+            ModernButton(btn_fail_frame, text=" 打开文件夹 ", variant="primary",
+                         command=_open_and_close).pack(side=tk.LEFT, padx=6)
+            ModernButton(btn_fail_frame, text=" 知道了 ", variant="secondary",
+                         command=fail_dialog.destroy).pack(side=tk.LEFT, padx=6)
 
             fail_dialog.update_idletasks()
             pw, ph = 420, 220
@@ -2370,26 +3591,18 @@ class PaperMonitorApp:
 
     def _add_receiver_widget(self, email: str):
         """创建单个收件邮箱行（输入框 + 删除按钮）"""
-        row_frame = tk.Frame(self._receiver_frame, bg=COLORS["bg_page"])
+        row_frame = tk.Frame(self._receiver_frame, bg=COLORS["bg_card"])
         row_frame.pack(fill=tk.X, pady=2)
 
         sv = tk.StringVar(value=email)
-        entry = tk.Entry(row_frame, textvariable=sv,
-                         bd=1, relief="solid", highlightthickness=0,
-                         bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                         insertbackground=COLORS["text_body"],
-                         insertofftime=0,
-                         selectbackground=COLORS["primary_light"],
-                         selectforeground=COLORS["primary_active"],
-                         cursor="xterm",
-                         font=FONT_BODY)
+        entry = ModernEntry(row_frame, textvariable=sv)
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
 
         idx = len(self._receiver_list)
         remove_btn = tk.Label(row_frame, text=f"{ICONS['trash']}",
                               font=FONT_CAPTION,
                               fg=COLORS["danger"],
-                              bg=COLORS["bg_page"],
+                              bg=COLORS["bg_card"],
                               cursor="hand2",
                               padx=3)
         remove_btn.pack(side=tk.RIGHT)
@@ -2463,24 +3676,12 @@ HONGXUN · 论文监控工具支持在检测到符合条件的新论文时，自
    · SMTP端口：465（默认）
 
 3. 添加收件邮箱（可选多个）
-
-━━━ 关于激活 ━━━
-
-软件提供 14 天免费试用，试用期内可正常使用邮件推送。
-试用到期后需使用礼品券激活才能继续使用。
-
-点击「🎁 礼品券」按钮输入24位编码即可解锁服务。
-服务解锁后绑定当前设备，更换设备需重新激活。
 """
         text.insert("1.0", content)
         text.configure(state=tk.DISABLED)
 
-        tk.Button(intro, text="知道了",
-                  font=FONT_BODY,
-                  bg=COLORS["primary"], fg="white",
-                  relief="flat", padx=24, pady=4,
-                  cursor="hand2",
-                  command=intro.destroy).pack(pady=(4, 16))
+        ModernButton(intro, text="知道了", variant="primary",
+                     command=intro.destroy).pack(pady=(4, 16))
 
     # ===================== 完整使用说明 =====================
 
@@ -2513,12 +3714,16 @@ HONGXUN · 论文监控工具支持在检测到符合条件的新论文时，自
 ▸ 论文检索监控
   按期刊 + 关键词检索 CrossRef 学术数据库，自动获取论文标题、作者、
   摘要、DOI 等信息，支持六级摘要深度补全，并生成结构化检索报告。
-  时间范围自动按月度切割逐月检索，确保结果完整稳定。支持一键检索，
-  报告自动保存到 output/ 目录。
+  时间范围自动按周切割逐周检索，降低漏检概率，确保结果完整稳定。
+  支持一键检索，报告自动保存到 output/ 目录。
 
 ▸ 文献书架
   三栏布局文献管理器：左侧论文列表、中间摘要预览、右侧元数据卡片。
-  支持多选、批量操作、状态标记（待读/已读/排除）、RIS 格式导出。
+  支持多选、批量操作、状态标记（待读/已读/排除）、Zotero 格式导出。
+
+▸ 论文 PDF 下载
+  内置多来源回退下载（Unpaywall / OpenAlex / arXiv / PMC / 出版社直连），
+  并支持可选的 Sci-Hub 增强获取付费论文。
 
 ▸ 每日邮件推送
   每日 8:00 自动检查符合监控条件的新论文，并通过 SMTP 邮件
@@ -2529,9 +3734,13 @@ HONGXUN · 论文监控工具支持在检测到符合条件的新论文时，自
   邮件发送失败时弹窗提示，并提供「打开文件夹」按钮快速定位
   本地保存的附件，方便查看和手动发送。
 
-▸ 礼品券激活系统
-  通过 24 位礼品券激活全部高级功能，包含 AI 翻译、邮件推送。
-  14 天免费试用期内可体验全部功能。"""},
+▸ 智能期刊选择
+  内置中科院 1/2 区 4295 本期刊库，按大类 → 小类 → 分区三级分类树
+  可视化选择期刊，并支持手动输入库外期刊。
+
+▸ AI 翻译
+  基于 DeepSeek API 将论文标题和摘要从英文自动翻译为中文，
+  检索报告与推送邮件中均包含翻译结果。"""},
             {"title": "📖 二、论文监控", "content": """论文监控是软件的核心功能，支持按期刊和关键词检索 CrossRef 学术数据库。
 
 ■ 任务设置
@@ -2591,12 +3800,6 @@ HONGXUN · 论文监控工具支持在检测到符合条件的新论文时，自
 · 附件保存在 output/unsent/ 目录下，数据不丢失
 · 修正邮箱配置后，点击「再发送」按钮重新尝试发送
 
-■ 关于激活服务
-
-· 软件提供 14 天免费试用，试用期内可正常使用邮件推送
-· 试用到期后需使用礼品券激活才能继续使用
-· 激活状态显示在邮箱设置区域顶部（绿色为已激活，黄色为未激活）
-
 ■ 注意事项
 
 · 每日 8:00 执行一次增量检查
@@ -2607,56 +3810,57 @@ HONGXUN · 论文监控工具支持在检测到符合条件的新论文时，自
             {"title": "🌐 四、AI翻译", "content": """AI 翻译基于 DeepSeek API（OpenAI 兼容接口），
 可将论文标题和摘要从英文自动翻译为中文。
 
-■ 使用方法
+■ 配置方法
 
-在「任务设置」区域找到「AI翻译（英→中）」开关，
-点击方框使其显示 ✓ 即为开启。
+在「设置」页找到「AI翻译（英→中）」开关，点击使其显示 ✓ 即为开启。
+同时在项目根目录 .env 文件中配置 DeepSeek API Key：
+DEEPSEEK_API_KEY=sk-your-key-here
+
+请将 sk-your-key-here 替换为实际的 DeepSeek API Key。
+配置完成后重启软件即可生效。
 
 ■ 生效范围
 
-· 历史检索报告：翻译结果写入报告文档
-· 每日推送邮件：翻译结果附在邮件正文中
-· 全局生效：开启后所有检索和推送都包含翻译
+· 历史检索报告：翻译结果写入报告文档（中英双语）
+· 每日推送邮件：翻译结果附在邮件正文中（中英双语）
+· 文献书架：保存中英文双语内容
 
 ■ 注意事项
 
 · AI 翻译需要礼品券激活
 · 翻译功能在检索过程中自动调用，无需手动触发"""},
 
-            {"title": "🎟 六、礼品券", "content": """礼品券用于解锁软件的高级功能，包含：
+            {"title": "📄 五、PDF 下载", "content": """支持从多个来源获取论文 PDF 文件，按顺序自动回退直到成功。
 
-   ✓ AI 翻译（英→中）
-   ✓ 邮件推送服务
+■ 下载方式
 
+在「文献书架」中选择论文，点击中栏的「⬇ 下载 PDF」按钮，
+软件会依次尝试以下来源：
+① Unpaywall（OA 权威索引）
+② OpenAlex
+③ arXiv
+④ PMC（PubMed Central）
+⑤ 出版社直连
+⑥ Sci-Hub（可选，默认关闭）
 
-■ 兑换方法
+■ Sci-Hub 增强
 
-① 点击「礼品券」按钮（位于邮箱设置标题栏右侧）
-② 输入 24 位礼品券编码
-③ 格式：XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
-④ 点击「兑换」
+· 开启入口：设置 → PDF 下载 → Sci-Hub 增强
+· 开启前需阅读版权风险提示并确认（5 秒倒计时）
+· 通过非官方渠道获取付费论文 PDF 可能违反当地法律法规，请谨慎使用
+· 建议优先使用机构合法途径获取文献
 
-■ 有效期
+■ 文件命名与保存
 
-· 兑换后服务与当前设备（MAC 地址）绑定
-· 兑换后永久有效
-· 到期后需重新兑换
+· 文件名格式：首作者姓_年份_短标题.pdf
+· 默认保存目录：~/Downloads/HONGXUN-PDF/
+· 可在「设置 → PDF 下载 → 保存目录」中自定义
 
-■ 激活状态
+■ 注意事项
 
-兑换成功后，以下位置的状态提示将变为绿色：
-· 邮箱设置区域的许可状态
-
-
-■ 获取礼品券
-
-如有需要请联系：
-抖音号：83987351113"""},
-            {"title": "⚠ 七、常见问题", "content": """Q: 点击各按钮后反应慢（卡顿 2-3 秒）？
-A: 激活状态首次检测需要联网确认，请确保网络畅通。
-   首次确认后同次会话内不再重复联网，后续操作瞬时响应。
-
-Q: 检索过程中出现网络错误？
+· 免费来源（Unpaywall/OpenAlex/arXiv/PMC）优先，Sci-Hub 仅作兜底
+· 仅下载合法可用的 PDF，登录页 / 验证码页面会被自动拒绝"""},
+            {"title": "⚠ 六、常见问题", "content": """Q: 检索过程中出现网络错误？
 A: CrossRef 数据库需联网访问，请检查网络连接。
    如果频繁超时，可减少期刊或关键词数量后重试。
 
@@ -2671,19 +3875,15 @@ A: 软件弹出提示框说明失败原因，并提供「打开文件夹」按�
    修正后点击「再发送」按钮重新尝试发送，或从失败弹窗中打开文件夹
    手动获取已保存在本地的附件。附件路径：output/unsent/
 
-   另外，软件提供 14 天免费试用，试用期内可直接使用邮件推送功能，
-   无需礼品券即可测试邮箱配置是否正确。
-
 Q: 每日推送 8:00 没有收到邮件？
 A: 请检查：
-   · 软件是否已激活或仍在 14 天试用期内（查看邮箱设置顶部状态提示）
    · 邮箱配置是否正确（发件邮箱、授权码、收件邮箱）
    · 前一天是否有新增论文（无新增则不发送）
    · 守护进程是否仍在运行（查看底部状态栏指示灯）
    · 邮件是否发送失败（失败时会弹窗提示，附件保存在本地）
 
 Q: 两次检索结果数量不一致？
-A: 历史检索已改为按月切割逐月检索，大幅提升了结果一致性。
+A: 历史检索已改为按周切割逐周检索，大幅提升了结果一致性与完整性。
    但如果 CrossRef API 自身索引更新，不同时间检索仍可能有差异。
 
 Q: 窗口最大化后内容显示不全？
@@ -2693,15 +3893,28 @@ A: 窗口大小变化时字体和滚动区域会自动适配。
 Q: 如何反馈问题？
 A: 点击顶部工具栏的「意见反馈」按钮，
    填写问题描述和您的邮箱后提交。"""},
-            {"title": "📋 八、版本信息", "content": f"""鸿讯 HONGXUN — 版本信息
+            {"title": "📋 七、版本信息", "content": f"""鸿讯 HONGXUN — 版本信息
 
 ━━━ 当前版本 ━━━
 
   版本：{APP_VERSION}
-  发布日期：2026-07-27
+  发布日期：2026-08-05
   软件著作权登记版
 
 ━━━ 版本历程 ━━━
+
+  v2.0.0（2026-08-05）
+    · 大版本升级：功能与稳定性全面提升
+    · 智能期刊选择器：中科院 1/2 区 4295 本期刊库，三级分类树可视化选择
+    · 论文 PDF 下载：多来源回退（Unpaywall/OpenAlex/arXiv/PMC/出版社 + 可选 Sci-Hub）
+    · 激活状态展示、推送时间可配置、Sci-Hub 版权风险提示、公告推送系统
+    · 滚动条优化：内容放不下时才显示滑块，修复滚动残影
+    · 更新检查与版本号对齐
+
+  v1.5.0（2026-08-01）
+    · UI 视觉打磨：主色 500 色阶、柔和阴影、卡片边框、底部留白
+    · 期刊库全量导入 4295 本、期刊选择器过滤 3/4 区
+    · 现代圆角滚动条、统计卡优化、按钮防黑底透色
 
   v1.4.0（2026-07-27）
     · UI 布局重构：侧栏固定宽度、每日推送移至右侧内容区
@@ -2709,17 +3922,13 @@ A: 点击顶部工具栏的「意见反馈」按钮，
     · Notebook Tab VS Code 风格、卡片边框跨平台修复
     · 一键检索（自动保存到 output/ 、不强制切 Tab）
     · 示例填充、macOS 原生通知、首次运行向导
-    · Logger 系统、硬编码凭据集中管理、删除按钮替换
-    · 任务卡「⋯」更多菜单、运行指示器
 
   v1.3.0（2026-07-26）
     · GUI 架构重构：拆分 gui/ 组件包
     · 圆角卡片系统、暖色调色彩体系、三栏文献书架
-    · Quick Look、批量操作、48 个线性图标
 
   v1.2.0（2026-07-23）
-    · 文献书架功能：三栏布局、状态筛选、RIS 导出
-    · Apple 色系 GUI 视觉重构
+    · 文献书架功能：三栏布局、状态筛选、Zotero 导出
 
   v1.1.0（2026-07-21）
     · 项目重组、检索按月切割、每日推送改进
@@ -2730,15 +3939,14 @@ A: 点击顶部工具栏的「意见反馈」按钮，
 ━━━ 技术栈 ━━━
 
   · Python 3 + Tkinter GUI
-  · CrossRef API 论文检索（按月切割逐月查询）
+  · CrossRef API 论文检索（按周切割逐周查询，降低漏检率）
   · OpenAlex / Semantic Scholar 摘要补全
   · SMTP SSL 邮件推送（每日 8:00）
   · launchd 开机自启（macOS）
 
 ━━━ 联系 ━━━
 
-  意见反馈：点击顶部工具栏按钮或发送邮件至 xuhan@henetc.cn
-  礼品券获取：抖音号 83987351113"""},
+  意见反馈：点击顶部工具栏按钮或发送邮件至 xuhan@henetc.cn"""},
         ]
 
         section_buttons = []
@@ -2825,10 +4033,8 @@ A: 点击顶部工具栏的「意见反馈」按钮，
         entry_var = tk.StringVar()
         entry_frame = tk.Frame(dialog, bg=COLORS["bg_page"])
         entry_frame.pack(pady=14)
-        entry = tk.Entry(entry_frame, textvariable=entry_var, width=34,
-                          font=(_ui_mono_family(), FONT_BASE_SIZE),
-                          bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                          relief="solid", bd=1)
+        entry = ModernEntry(entry_frame, textvariable=entry_var, width=34,
+                            font=(_ui_mono_family(), FONT_BASE_SIZE))
         entry.pack(side=tk.LEFT, padx=(0, 8))
         entry.focus_set()
 
@@ -2839,6 +4045,15 @@ A: 点击顶部工具栏的「意见反馈」按钮，
                 return
             success, msg = coupon_manager.redeem_coupon(code)
             if success:
+                # 附加到期时间
+                try:
+                    exp_info = coupon_manager.get_expiry_info()
+                    exp = exp_info.get("expires_at", "")
+                    if exp:
+                        src = {"subscription": "订阅", "trial": "试用"}.get(exp_info.get("source", ""), "礼品券")
+                        msg += f"\n\n{src}到期时间：{exp[:10]}"
+                except Exception:
+                    pass
                 messagebox.showinfo("兑换成功", msg, parent=dialog)
                 self._invalidate_activation_cache()
                 self._update_license_status()
@@ -2847,16 +4062,12 @@ A: 点击顶部工具栏的「意见反馈」按钮，
             else:
                 messagebox.showerror("兑换失败", msg, parent=dialog)
 
-        tk.Button(entry_frame, text="兑换",
-                  font=FONT_BODY,
-                  bg=COLORS["primary"], fg="black",
-                  relief="flat", padx=16, pady=4,
-                  cursor="hand2",
-                  command=do_redeem).pack(side=tk.LEFT)
+        ModernButton(entry_frame, text="兑换", variant="primary", height=30,
+                     command=do_redeem).pack(side=tk.LEFT)
 
         entry.bind("<Return>", lambda e: do_redeem())
 
-        tk.Label(dialog, text="提示：兑换后服务与当前设备绑定，永久有效",
+        tk.Label(dialog, text="提示：兑换后服务与当前设备绑定，到期时间以兑换结果为准",
                  font=(_ui_font_family(), 9),
                  fg=COLORS["text_hint"],
                  bg=COLORS["bg_page"]).pack(pady=(6, 0))
@@ -2923,13 +4134,7 @@ A: 点击顶部工具栏的「意见反馈」按钮，
                  bg=COLORS["bg_page"]).pack(pady=(20, 12))
 
         pwd_var = tk.StringVar()
-        pwd_entry = tk.Entry(dialog, textvariable=pwd_var, show="*", width=30,
-                              font=FONT_BODY,
-                              insertbackground=COLORS["text_body"],
-                              selectbackground=COLORS["primary_light"],
-                              selectforeground=COLORS["primary_active"],
-                              bg=COLORS["bg_input"], fg=COLORS["text_body"],
-                              relief="solid", bd=1)
+        pwd_entry = ModernEntry(dialog, textvariable=pwd_var, show="*", width=30)
         pwd_entry.pack()
         pwd_entry.focus_set()
 
@@ -2946,18 +4151,10 @@ A: 点击顶部工具栏的「意见反馈」按钮，
 
         btn_frame = tk.Frame(dialog, bg=COLORS["bg_page"])
         btn_frame.pack(pady=16)
-        tk.Button(btn_frame, text="确认",
-                  font=FONT_BODY,
-                  bg=COLORS["primary"], fg="white",
-                  relief="flat", padx=20, pady=4,
-                  cursor="hand2",
-                  command=do_verify).pack(side=tk.LEFT, padx=6)
-        tk.Button(btn_frame, text="取消",
-                  font=FONT_BODY,
-                  bg=COLORS["bg_card"], fg=COLORS["text_body"],
-                  relief="flat", padx=20, pady=4,
-                  cursor="hand2",
-                  command=dialog.destroy).pack(side=tk.LEFT, padx=6)
+        ModernButton(btn_frame, text="确认", variant="primary",
+                     command=do_verify).pack(side=tk.LEFT, padx=6)
+        ModernButton(btn_frame, text="取消", variant="secondary",
+                     command=dialog.destroy).pack(side=tk.LEFT, padx=6)
         pwd_entry.bind("<Return>", lambda e: do_verify())
 
         return False
@@ -2982,6 +4179,7 @@ A: 点击顶部工具栏的「意见反馈」按钮，
             "keywords": task.get("keywords", []),
             "date_start": task.get("date_start", ""),
             "date_end": task.get("date_end", ""),
+            "translate_enabled": bool(load_app_config().get("translate_enabled", False)),
             "saved_at": datetime.now().isoformat(),
         }
         with open(cp_path, 'w', encoding='utf-8') as f:
@@ -3036,6 +4234,21 @@ A: 点击顶部工具栏的「意见反馈」按钮，
                 f"当前任务条件未改变，是否继续执行？\n\n"
                 f"选择「是」→ 继续执行\n选择「否」→ 清除断点，从开始执行")
             if resume:
+                # 若断点时翻译开启，续传前先确认 API 仍可用
+                if cp.get("translate_enabled") and load_app_config().get("translate_enabled"):
+                    ok, _msg = self._probe_llm_api_sync()
+                    if not ok:
+                        ret = messagebox.askyesno(
+                            "LLM API 连接异常",
+                            f"续传检索需要 AI 翻译，但检测到 API 连接异常：\n\n{_msg}\n\n"
+                            f"「是」→ 关闭 AI 翻译后继续（跳过翻译）\n"
+                            f"「否」→ 取消续传")
+                        if ret:
+                            cfg = load_app_config()
+                            cfg["translate_enabled"] = False
+                            save_app_config(cfg)
+                        else:
+                            return
                 self.status_var.set("正在继续上次的检索任务...")
                 self._run_history()
             else:
@@ -3047,6 +4260,58 @@ A: 点击顶部工具栏的「意见反馈」按钮，
             messagebox.showinfo(
                 "断点已清除",
                 f"检测到任务条件已改变，已清除上次未完成的检索断点，将重新开始。")
+
+    def _probe_llm_api_sync(self) -> tuple[bool, str]:
+        """同步探测 LLM API 可用性（阻塞，供续传前判断）。返回 (ok, msg)。"""
+        from core.translator import get_api_key, test_api_connection
+        if not get_api_key():
+            return False, "未配置 API Key"
+        try:
+            return test_api_connection()
+        except Exception as e:
+            return False, str(e)
+
+    def _check_llm_api_on_startup(self):
+        """启动时检测 LLM API 是否可用（仅当翻译开启且有 Key 时）。
+
+        异步测试，结果经 root.after 弹窗。可用则静默继续；不可用则让用户
+        选择关闭翻译或保持开启（翻译会自动跳过）。
+        """
+        from core.translator import get_api_key, test_api_connection
+        cfg = load_app_config()
+        if not cfg.get("translate_enabled"):
+            return
+        if not get_api_key():
+            return
+
+        def _work():
+            ok, msg = test_api_connection()
+            if ok:
+                return  # 可用，静默
+            self.root.after(0, lambda: self._on_startup_llm_unavailable(msg))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_startup_llm_unavailable(self, msg):
+        """启动时 LLM API 不可用 → 询问是否关闭翻译。"""
+        ret = messagebox.askyesno(
+            "LLM API 连接异常",
+            f"检测到 AI 翻译 API 连接异常：\n\n{msg}\n\n"
+            f"可能导致检索/推送的中文翻译失败。\n\n"
+            f"「是」→ 关闭 AI 翻译\n"
+            f"「否」→ 保持开启（翻译会自动跳过，请检查 API 配置）")
+        if ret:
+            cfg = load_app_config()
+            cfg["translate_enabled"] = False
+            save_app_config(cfg)
+            try:
+                if self._ai_translate_toggle is not None:
+                    self._ai_translate_toggle.set(False)
+            except Exception:
+                pass
+            self.status_var.set("AI 翻译已关闭（API 不可用）")
+        else:
+            self.status_var.set("AI 翻译保持开启，请检查 API 配置")
 
     # ===================== 窗口关闭处理（断点保存） =====================
 
@@ -3096,6 +4361,66 @@ A: 点击顶部工具栏的「意见反馈」按钮，
                 )
             except Exception:
                 pass
+
+    def _check_expiry_on_startup(self):
+        """启动时检测订阅/礼品券/试用是否到期，到期自动关停受限功能。
+
+        永久激活（permanent）不在此检查范围内，永不弹到期提醒。
+        """
+        try:
+            info = coupon_manager.get_expiry_info()
+            # 永久券：直接返回，不弹任何提醒
+            if info.get("permanent"):
+                return
+
+            if coupon_manager.is_in_validity():
+                # 在有效期内：若处于宽限期则提示续费
+                if info.get("in_grace"):
+                    messagebox.showwarning(
+                        "服务已到期（宽限期）",
+                        f"您的服务已于 {info.get('expires_at', '')[:10]} 到期。\n\n"
+                        f"宽限期至 {info.get('grace_until', '')[:10]}，期间仍可使用，"
+                        f"请尽快续费以免服务中断。")
+                return
+
+            # 已完全到期 → 自动关停受限功能
+            src = {"subscription": "订阅", "trial": "试用"}.get(
+                info.get("source", ""), "礼品券")
+            messagebox.showwarning(
+                "服务已到期",
+                f"您的{src}已于 {info.get('expires_at', '')[:10]} 到期。\n\n"
+                f"每日推送、邮箱设置、AI 翻译、Sci-Hub 增强已自动关闭。\n"
+                f"请开通订阅或兑换礼品券后继续使用。")
+
+            # 关闭每日推送
+            if self._scheduler_daemon_running:
+                try:
+                    self._stop_daemon_scheduler()
+                    self._scheduler_daemon_running = False
+                    self._update_daily_push_btn(False)
+                except Exception:
+                    pass
+            # 关闭翻译
+            try:
+                cfg = load_app_config()
+                if cfg.get("translate_enabled"):
+                    cfg["translate_enabled"] = False
+                    save_app_config(cfg)
+                if self._ai_translate_toggle is not None:
+                    self._ai_translate_toggle.set(False)
+            except Exception:
+                pass
+            # 关闭 Sci-Hub
+            try:
+                if self._scihub_toggle is not None and self._scihub_toggle.get():
+                    self._scihub_toggle.set(False)
+                    self._on_pdf_cfg_changed()
+            except Exception:
+                pass
+            self._update_license_status()
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
     def _check_first_run_wizard(self):
         """首次运行向导：引导用户创建第一个任务"""
@@ -3157,11 +4482,8 @@ A: 点击顶部工具栏的「意见反馈」按钮，
 
         btn_frame = tk.Frame(welcome, bg=COLORS["bg_page"])
         btn_frame.pack(pady=(16, 0))
-        tk.Button(btn_frame, text="开始使用",
-                  font=FONT_BODY, bg=COLORS["primary"],
-                  fg="white", relief="flat", padx=24, pady=6,
-                  cursor="hand2",
-                  command=welcome.destroy).pack()
+        ModernButton(btn_frame, text="开始使用", variant="primary",
+                     command=welcome.destroy).pack()
 
         welcome.update_idletasks()
         x = self.root.winfo_x() + (self.root.winfo_width() - 480) // 2
@@ -3274,20 +4596,16 @@ A: 点击顶部工具栏的「意见反馈」按钮，
                 on_btn()
             dialog.destroy()
 
-        tk.Button(btn_frame, text=btn_text,
-                  font=FONT_BODY, bg=COLORS["primary"], fg="white",
-                  relief="flat", padx=20, pady=4, cursor="hand2",
-                  command=on_btn_click).pack(side=tk.LEFT, padx=6)
+        ModernButton(btn_frame, text=btn_text, variant="primary",
+                     command=on_btn_click).pack(side=tk.LEFT, padx=6)
 
         if btn_alt_text:
             def on_alt_click():
                 if on_alt:
                     on_alt()
                 dialog.destroy()
-            tk.Button(btn_frame, text=btn_alt_text,
-                      font=FONT_BODY, bg=COLORS["bg_card"], fg=COLORS["text_body"],
-                      relief="flat", padx=20, pady=4, cursor="hand2",
-                      command=on_alt_click).pack(side=tk.LEFT, padx=6)
+            ModernButton(btn_frame, text=btn_alt_text, variant="secondary",
+                         command=on_alt_click).pack(side=tk.LEFT, padx=6)
 
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
         dialog.grab_set()
@@ -3385,6 +4703,18 @@ A: 点击顶部工具栏的「意见反馈」按钮，
             import json
             with open(result_file, "r", encoding='utf-8') as f:
                 result = json.load(f)
+
+            # LLM 翻译失败标记 → 弹窗 + 暂停推送
+            if result.get("llm_failed"):
+                reason = result.get("reason", "LLM API 调用失败")
+                self._show_llm_error_dialog(f"每日推送中止：{reason}")
+                # 暂停推送
+                self._stop_daemon_scheduler()
+                try:
+                    os.remove(result_file)
+                except Exception:
+                    pass
+                return
 
             result_date = result.get("date", "").split(" ")[0]
             today_str = datetime.now().strftime("%Y-%m-%d")

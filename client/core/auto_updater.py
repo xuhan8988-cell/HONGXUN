@@ -22,14 +22,12 @@ from typing import Optional
 import requests
 
 # ── 仓库配置 ────────────────────────────────────────────
-_GITEE_OWNER = "mysterious-code-of-ancients"
-_GITEE_REPO = "hongxun"
-_GITEE_RELEASE_URL = f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/releases/latest"
-_GITEE_TAGS_URL = f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/tags"
-_GITEE_TOKEN = "5a813021b459eb4bb2901b6a37162533"
+_GITHUB_OWNER = "xuhan8988-cell"
+_GITHUB_REPO = "HONGXUN"
+_GITHUB_RELEASE_URL = f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}/releases/latest"
 # 公告文件 — 修改此 URL 指向的 JSON 即可向所有用户推送弹窗
-# 你需要在 Gitee 仓库根目录维护一个 notice.json，格式见 fetch_notice()
-_GITEE_NOTICE_URL = f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/contents/notice.json?access_token={_GITEE_TOKEN}"
+# 你需要在 GitHub 仓库根目录维护一个 notice.json，格式见 fetch_notice()
+_GITHUB_NOTICE_URL = f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}/contents/notice.json"
 
 # 当前版本（与 gui/theme.py 同步，由 init() 注入覆盖）
 CURRENT_VERSION = "0.0.0"
@@ -132,13 +130,13 @@ def _parse_version(v: str) -> tuple:
 
 def fetch_notice() -> Optional[dict]:
     """
-    从 Gitee 仓库读取 notice.json，返回公告内容。
+    从 GitHub 仓库读取 notice.json，返回公告内容。
 
-    你需要在 Gitee 仓库根目录创建 notice.json，格式：
+    你需要在 GitHub 仓库根目录创建 notice.json，格式：
     {
       "msg_id": "20260728_001",
-      "title": "重要更新 v1.5.0",
-      "body": "新增功能：\\n1. 状态图标优化\\n2. 右侧栏滑动支持\\n3. ..."
+      "title": "重要更新 v2.0.0",
+      "body": "新增功能：\\n1. DeepSeek AI 翻译\\n2. 重构礼品券系统\\n3. ..."
     }
 
     msg_id 递增即可让每个用户只弹窗一次。body 支持 \\n 换行。
@@ -146,13 +144,16 @@ def fetch_notice() -> Optional[dict]:
     """
     marker = _load_update_marker()
     try:
-        resp = requests.get(_GITEE_NOTICE_URL, timeout=10)
+        resp = requests.get(_GITHUB_NOTICE_URL, timeout=10)
         if resp.status_code != 200:
             return None
         data = resp.json()
-        # Gitee API 返回的 content 是 base64 编码
+        # GitHub API 返回的 content 是 base64 编码
         import base64
-        raw = base64.b64decode(data.get("content", "")).decode("utf-8")
+        raw_content = data.get("content", "")
+        if not raw_content:
+            return None
+        raw = base64.b64decode(raw_content).decode("utf-8")
         notice = json.loads(raw)
         if not notice or not isinstance(notice, dict):
             return None
@@ -179,7 +180,7 @@ def mark_notice_read(msg_id: str):
 
 def check_update(skip_notified: bool = False) -> Optional[dict]:
     """
-    检查 Gitee 最新发布版本。
+    检查 GitHub 最新发布版本。
     返回 dict = {"version": str, "download_url": str, "body": str, "tag_name": str}
     skip_notified=True 则跳过已通知过的版本。
     """
@@ -189,9 +190,7 @@ def check_update(skip_notified: bool = False) -> Optional[dict]:
         return None
 
     try:
-        resp = requests.get(_GITEE_RELEASE_URL, params={
-            "access_token": _GITEE_TOKEN,
-        }, timeout=15)
+        resp = requests.get(_GITHUB_RELEASE_URL, timeout=15)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -206,8 +205,6 @@ def check_update(skip_notified: bool = False) -> Optional[dict]:
             return None
 
         # 匹配当前平台的发布附件
-
-        # 匹配当前平台的发布附件
         asset_filename = _get_asset_filename()
         download_url = ""
         for asset in data.get("assets", []):
@@ -216,10 +213,10 @@ def check_update(skip_notified: bool = False) -> Optional[dict]:
                 break
 
         if not download_url:
-            # fallback：用仓库源码 zip（源码模式下可用）
+            # fallback：用仓库源码 zip
             download_url = data.get("zipball_url", "")
             if not download_url:
-                download_url = f"https://gitee.com/{_GITEE_OWNER}/{_GITEE_REPO}/archive/refs/tags/{tag}.zip"
+                download_url = f"https://github.com/{_GITHUB_OWNER}/{_GITHUB_REPO}/archive/refs/tags/{tag}.zip"
 
         result = {
             "version": version,
@@ -261,19 +258,12 @@ def download_update(info: dict, progress_callback=None) -> Optional[str]:
     if not url:
         return None
 
-    # 处理 Gitee 的 release 下载（需要 token）
-    if "gitee.com" in url and "/attachments/" not in url:
-        # 用 token 认证
-        auth_url = url + (f"?access_token={_GITEE_TOKEN}" if "?" not in url else "")
-    else:
-        auth_url = url
-
     tmp_dir = tempfile.mkdtemp(prefix="hongxun_update_")
     ext = ".zip" if url.endswith(".zip") else ".tar.gz"
     local_path = os.path.join(tmp_dir, f"hongxun_update{ext}")
 
     try:
-        resp = requests.get(auth_url, stream=True, timeout=60)
+        resp = requests.get(url, stream=True, timeout=60)
         if resp.status_code != 200:
             return None
 

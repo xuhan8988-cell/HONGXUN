@@ -10,6 +10,7 @@
   - search:         CrossRef 检索 + ISSN 解析
   - abstract:       六级摘要补全流水线
   - coupon_manager: 礼品券管理（永久有效）
+  - translator:     DeepSeek AI 翻译（英→中）
   - email_sender:   邮件发送
   - code_protector: 底层代码保护
   - engine:         编排协调层（run_history_search / run_increment_check）
@@ -22,7 +23,7 @@
   - 代码保护 → code_protector.py
   - 报告格式 → engine.py
 """
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 # 配置层
 from .config_manager import (
@@ -55,3 +56,5 @@ from . import search
 from . import abstract
 from . import email_sender
 from . import library
+from . import translator
+from .journal_store import JournalStore

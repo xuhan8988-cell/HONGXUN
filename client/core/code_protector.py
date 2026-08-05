@@ -29,6 +29,7 @@ PROTECTED_FILES = [
     "core/engine.py",
     "core/search.py",
     "core/session.py",
+    "core/subscription.py",
 ]
 
 # 解锁密码（非本机设备编辑代码时需输入）

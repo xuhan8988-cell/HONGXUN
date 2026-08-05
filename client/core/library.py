@@ -3,12 +3,28 @@
 版本 1.0.0
 
 本地 JSON 存储的论文库，支持按 DOI / 标题去重、阅读状态标记、RIS 导出。
+
+线程安全：所有写操作使用 merge-on-write 模式，先读磁盘最新状态，
+再合并当前修改后写入，避免 scheduler 和 GUI 并发写入相互覆盖。
 """
 
 import os
 import json
 from datetime import datetime
 from .config_manager import LIBRARY_FILE, _save_json, _load_json
+
+
+def _merge_save(lib_update_fn):
+    """merge-on-write: 读取磁盘最新数据 → 应用修改 → 原子写入。
+
+    lib_update_fn 接收 (lib_dict) 参数，就地修改 lib_dict。
+    这样即使 scheduler 和 GUI 几乎同时写，也不会覆盖彼此的更改。
+    """
+    lib = _load_json(LIBRARY_FILE, {"version": 1, "papers": []})
+    if "papers" not in lib:
+        lib["papers"] = []
+    lib_update_fn(lib)
+    _save_json(LIBRARY_FILE, lib)
 
 
 def _next_id(lib: dict) -> str:
@@ -32,65 +48,62 @@ def load_library() -> dict:
     return data
 
 
-def save_library(data: dict):
-    """写回 library.json"""
-    _save_json(LIBRARY_FILE, data)
-
-
 def import_papers(papers: list[dict], task_name: str = "") -> int:
     """导入论文列表到书架，按 DOI 去重，返回新增数量。
 
     去重逻辑：
     1. 优先用 DOI 作为唯一键
     2. 无 DOI 时用 (title_lower, container_title_lower) 作为联合键
+
+    使用 merge-on-write 模式，线程/进程安全。
     """
-    lib = load_library()
+    _added = 0
 
-    existing_dois = {p.get("doi") for p in lib["papers"] if p.get("doi")}
-    existing_tj = {
-        (p.get("title", "").strip().lower(),
-         p.get("container_title", "").strip().lower())
-        for p in lib["papers"]
-    }
-
-    added = 0
-    for p in papers:
-        doi = (p.get("doi") or "").strip()
-        if doi and doi in existing_dois:
-            continue
-        if not doi:
-            # 无 DOI 时用 (标题, 期刊) 联合去重
-            tj = (p.get("title", "").strip().lower(),
-                  p.get("container_title", "").strip().lower())
-            if tj in existing_tj:
-                continue
-
-        entry = {
-            "id": _next_id(lib),
-            "title": p.get("title", ""),
-            "title_cn": p.get("title_cn", ""),
-            "authors": p.get("authors", ""),
-            "abstract": p.get("abstract", ""),
-            "abstract_cn": p.get("abstract_cn", ""),
-            "doi": doi,
-            "container_title": p.get("container_title", ""),
-            "pub_date": p.get("pub_date", ""),
-            "matched_keywords": p.get("matched_keywords", []),
-            "status": "pending",
-            "added_date": datetime.now().strftime("%Y-%m-%d"),
-            "task_name": task_name,
+    def _do_import(lib):
+        nonlocal _added
+        existing_dois = {p.get("doi") for p in lib["papers"] if p.get("doi")}
+        existing_tj = {
+            (p.get("title", "").strip().lower(),
+             p.get("container_title", "").strip().lower())
+            for p in lib["papers"]
         }
-        lib["papers"].insert(0, entry)  # 最新在前
-        existing_dois.add(doi) if doi else None
-        if not doi:
-            existing_tj.add((
-                p.get("title", "").strip().lower(),
-                p.get("container_title", "").strip().lower(),
-            ))
-        added += 1
 
-    save_library(lib)
-    return added
+        for p in papers:
+            doi = (p.get("doi") or "").strip()
+            if doi and doi in existing_dois:
+                continue
+            if not doi:
+                tj = (p.get("title", "").strip().lower(),
+                      p.get("container_title", "").strip().lower())
+                if tj in existing_tj:
+                    continue
+
+            entry = {
+                "id": _next_id(lib),
+                "title": p.get("title", ""),
+                "title_cn": p.get("title_cn", ""),
+                "authors": p.get("authors", ""),
+                "abstract": p.get("abstract", ""),
+                "abstract_cn": p.get("abstract_cn", ""),
+                "doi": doi,
+                "container_title": p.get("container_title", ""),
+                "pub_date": p.get("pub_date", ""),
+                "matched_keywords": p.get("matched_keywords", []),
+                "status": "pending",
+                "added_date": datetime.now().strftime("%Y-%m-%d"),
+                "task_name": task_name,
+            }
+            lib["papers"].insert(0, entry)
+            existing_dois.add(doi) if doi else None
+            if not doi:
+                existing_tj.add((
+                    p.get("title", "").strip().lower(),
+                    p.get("container_title", "").strip().lower(),
+                ))
+            _added += 1
+
+    _merge_save(_do_import)
+    return _added
 
 
 def get_paper(paper_id: str) -> dict | None:
@@ -104,31 +117,43 @@ def get_paper(paper_id: str) -> dict | None:
 
 def update_paper_status(paper_id: str, status: str):
     """更新论文阅读状态 (pending/read/excluded)"""
-    lib = load_library()
-    for p in lib["papers"]:
-        if p["id"] == paper_id:
-            p["status"] = status
-            break
-    save_library(lib)
+    def _do_update(lib):
+        for p in lib["papers"]:
+            if p["id"] == paper_id:
+                p["status"] = status
+                break
+    _merge_save(_do_update)
 
 
 def batch_update_status(ids: list[str], status: str) -> int:
     """批量更新论文阅读状态。返回更新的数量。"""
-    lib = load_library()
-    count = 0
-    for p in lib["papers"]:
-        if p["id"] in ids:
-            p["status"] = status
-            count += 1
-    save_library(lib)
-    return count
+    _count = 0
+    def _do_batch_update(lib):
+        nonlocal _count
+        for p in lib["papers"]:
+            if p["id"] in ids:
+                p["status"] = status
+                _count += 1
+    _merge_save(_do_batch_update)
+    return _count
+
+
+def update_paper_pdf(paper_id: str, pdf_path: str, status: str = "ok"):
+    """记录论文已下载的 PDF。status: "ok" / "failed"。"""
+    def _do_update(lib):
+        for p in lib["papers"]:
+            if p["id"] == paper_id:
+                p["pdf_path"] = pdf_path
+                p["pdf_status"] = status
+                break
+    _merge_save(_do_update)
 
 
 def delete_paper(paper_id: str):
     """从书架删除一篇论文"""
-    lib = load_library()
-    lib["papers"] = [p for p in lib["papers"] if p["id"] != paper_id]
-    save_library(lib)
+    def _do_delete(lib):
+        lib["papers"] = [p for p in lib["papers"] if p["id"] != paper_id]
+    _merge_save(_do_delete)
 
 
 def query_papers(status: str = None, search_text: str = None,

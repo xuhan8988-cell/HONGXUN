@@ -10,8 +10,8 @@ from tkinter import font, ttk
 # ======================================================================
 # 版本标识（暂存于此供 gui_app 导入）
 # ======================================================================
-APP_NAME = "鸿讯 HONGXUN（郑州大学定制版）"
-APP_VERSION = "1.5.0"
+APP_NAME = "鸿讯 HONGXUN"
+APP_VERSION = "2.0.0"
 AUTO_UPDATER_VERSION = APP_VERSION
 
 # ======================================================================
@@ -80,14 +80,14 @@ def init_fonts():
     FONT_MONO = font.Font(family=_ui_mono_family(), size=FONT_BASE_SIZE)
     FONT_LABEL = font.Font(family=_ff, size=FONT_BASE_SIZE, weight="bold")
     FONT_METRIC = font.Font(family=_ff, size=min(32, FONT_TITLE_SIZE * 2))
-    FONT_DISPLAY = font.Font(family=_ff, size=min(28, FONT_TITLE_SIZE + 8), weight="bold")
+    FONT_DISPLAY = font.Font(family=_ff, size=min(32, FONT_TITLE_SIZE + 10), weight="bold")
 
     # 推送字体变量到所有依赖模块（from-import 在导入时拷贝 None）
     import sys as _sys
     _fnames = ('FONT_BODY', 'FONT_BODY_BOLD', 'FONT_HEADING', 'FONT_TITLE',
                'FONT_CAPTION', 'FONT_MONO', 'FONT_LABEL', 'FONT_METRIC', 'FONT_DISPLAY')
     _g = globals()
-    for _mn in ('gui.widgets', 'gui.sidebar', 'gui.library_view', '__main__'):
+    for _mn in ('gui.widgets', 'gui.sidebar', 'gui.library_view', 'gui.dashboard', 'gui_app', '__main__'):
         _m = _sys.modules.get(_mn)
         if _m:
             for _n in _fnames:
@@ -111,72 +111,91 @@ def update_font_scale(scale_factor):
 # 颜色系统
 # ======================================================================
 COLORS = {
-    # ── 主色调（Tailwind Blue-600, 比 Apple Blue 更沉稳）──
-    "primary": "#2563EB",
-    "primary_hover": "#1D4ED8",
-    "primary_active": "#1E40AF",
-    "primary_light": "#DBEAFE",
+    # ── 主色调（Tailwind Blue-500 为基准，更通透）──
+    "primary": "#3B82F6",           # Blue-500（主色，更亮更通透）
+    "primary_2": "#60A5FA",         # Blue-400（渐变起始，更柔和）
+    "primary_hover": "#2563EB",     # Blue-600（hover 态）
+    "primary_active": "#1D4ED8",    # Blue-700（active 态）
+    "primary_light": "#DBEAFE",     # Blue-100（选中背景）
+    "primary_focus_ring": "#BFDBFE",  # Blue-200（聚焦光晕）
 
-    # ── 语义色 ──
-    "success": "#16A34A",           # Green-600
-    "success_light": "#DCFCE7",
-    "warning": "#D97706",           # Amber-600
-    "warning_light": "#FEF3C7",
-    "danger": "#DC2626",            # Red-600
-    "danger_light": "#FEE2E2",
+    # ── 语义色（500 色阶）──
+    "success": "#10B981",           # Emerald-500
+    "success_light": "#D1FAE5",     # Emerald-100
+    "warning": "#F59E0B",           # Amber-500
+    "warning_light": "#FEF3C7",     # Amber-100
+    "danger": "#EF4444",            # Red-500
+    "danger_light": "#FEE2E2",      # Red-100
 
-    # ── 背景色（暖白基调，更适合长时间阅读）──
-    "bg_page": "#FFFFFF",           # 纯白（原暖白 #F8F9FA，与侧栏拉大对比）
-    "bg_card": "#FFFFFF",           # 卡片保持纯白
-    "sidebar_bg": "#EAECEF",        # 更深暖灰侧栏（原 #F1F3F5，与页面 bg 拉开对比）
+    # ── 背景色（冷色调基调）──
+    "bg_page": "#F8FAFC",           # Slate-50（和侧栏统一，让白色卡片浮起来）
+    "bg_card": "#FFFFFF",           # 卡片纯白（浮在浅灰蓝背景上）
+    "sidebar_bg": "#F1F5F9",        # Slate-100（侧栏稍深）
     "bg_input": "#FFFFFF",
     "bg_input_focus": "#FFFFFF",
 
-    # ── 边框（更高对比度）──
-    "border": "#C8CCD0",            # 暖灰边框
-    "border_light": "#DEE0E3",      # 浅暖灰
-    "input_border": "#D1D5DB",
+    # ── 边框（冷灰）──
+    "border": "#E2E8F0",            # Slate-200（卡片边框）
+    "border_light": "#F1F5F9",      # Slate-100（分割线）
+    "input_border": "#CBD5E1",      # Slate-300
 
-    # ── 文字（更明显的对比度梯度）──
-    "text_title": "#111827",        # Gray-900（原 #1D1D1F）
-    "text_body": "#1F2937",         # Gray-800（原 #1D1D1F）
-    "text_secondary": "#6B7280",    # Gray-500（原 #86868B）
-    "text_hint": "#9CA3AF",         # Gray-400（原 #AEAEB2）
+    # ── 文字 ──
+    "text_title": "#0F172A",        # Slate-900（标题，最深）
+    "text_body": "#1E293B",         # Slate-800（正文）
+    "text_secondary": "#64748B",    # Slate-500（次要文字）
+    "text_hint": "#94A3B8",         # Slate-400（提示文字）
 
     # ── 交互状态 ──
-    "selected_bg": "#DBEAFE",       # Blue-100（原 #E8F0FE）
-    "selected_fg": "#1D4ED8",       # Blue-700（原 #007AFF）
-    "hover_bg": "#F3F4F6",          # Gray-100（原 #E8E8ED）
+    "selected_bg": "#DBEAFE",       # Blue-100
+    "selected_fg": "#1D4ED8",       # Blue-700
+    "hover_bg": "#F1F5F9",          # Slate-100
+
+    # ── 导航 ──
+    "nav_active_bg": "#EFF6FF",     # Blue-50（导航选中底色）
+    "nav_hover_bg": "#F8FAFC",      # 导航悬停底色（极浅冷灰）
 
     # ── 按钮 ──
     "btn_secondary_bg": "#FFFFFF",
-    "btn_secondary_fg": "#1F2937",
-    "btn_secondary_border": "#D1D5DB",
+    "btn_secondary_fg": "#0F172A",  # Slate-900，更深，接近纯黑
+    "btn_secondary_border": "#CBD5E1",
 
     # ── 状态指示 ──
-    "dot_on": "#16A34A",
-    "dot_off": "#9CA3AF",
+    "dot_on": "#10B981",
+    "dot_off": "#94A3B8",
 
-    # ── 阴影（预乘混合色，针对 bg_page=#F8F9FA）──
-    "shadow_1": "#ECECEF",           # 阴影层1（alpha 8%）
-    "shadow_2": "#E7E7EA",           # 阴影层2（alpha 6%）
-    "shadow_3": "#E2E2E5",           # 阴影层3（alpha 4%）
+    # ── 阴影（3 层叠色，更柔和，针对白底）──
+    "shadow_1": "#E2E8F0",           # 最顶层（近边缘，更浅）
+    "shadow_2": "#EEF2F7",           # 中间层（中等扩散）
+    "shadow_3": "#F8FAFC",           # 最底层（大面积柔和，几乎看不见）
 
     # ── 标签/胶囊色 ──
     "pill_pending_bg": "#FEF3C7",
-    "pill_pending_fg": "#92400E",
-    "pill_read_bg": "#DCFCE7",
-    "pill_read_fg": "#166534",
+    "pill_pending_fg": "#B45309",
+    "pill_read_bg": "#D1FAE5",
+    "pill_read_fg": "#065F46",
     "pill_excluded_bg": "#FEE2E2",
-    "pill_excluded_fg": "#991B1B",
+    "pill_excluded_fg": "#B91C1C",
 
     # ── 任务卡片彩色边条 ──
-    "task_accent_1": "#2563EB",
-    "task_accent_2": "#7C3AED",
-    "task_accent_3": "#059669",
-    "task_accent_4": "#D97706",
-    "task_accent_5": "#DC2626",
+    "task_accent_1": "#3B82F6",
+    "task_accent_2": "#8B5CF6",
+    "task_accent_3": "#10B981",
+    "task_accent_4": "#F59E0B",
+    "task_accent_5": "#EF4444",
+
+    # ── 滚动条 ──
+    "scrollbar_bg": "#F1F5F9",      # 滚动条背景
+    "scrollbar_thumb": "#CBD5E1",   # 滑块
+    "scrollbar_thumb_hover": "#94A3B8",  # 滑块 hover
 }
+
+# ======================================================================
+# 分级圆角系统
+# ======================================================================
+RADIUS_LG = 16      # 大卡片（主内容卡）
+RADIUS_MD = 12      # 小卡片（侧栏、元数据卡）
+RADIUS_SM = 8       # 按钮 / 输入框
+RADIUS_PILL = 999   # 标签 / 胶囊
 
 # ======================================================================
 # Unicode 图标系统
@@ -218,6 +237,24 @@ ICONS = {
     "error": "✕",
     "arrow_right": "▸",
     "arrow_down": "▾",
+    # ── 导航 / Lucide 风格图标键（优先查 PNG，emoji 作回退）──
+    "dashboard": "\U0001f4ca",
+    "settings": "⚙",
+    "bell": "\U0001f514",
+    "folder": "\U0001f4c2",
+    "layers": "\U0001f5c3",
+    "users": "\U0001f465",
+    "external": "↗",
+    "copy": "\U0001f4cb",
+    "history": "↺",
+    "send": "\U0001f4e4",
+    "arrow_up": "↑",
+    "download": "⬇",
+    "help": "?",
+    "alert": "⚠",
+    "monitor": "\U0001f4cb",
+    "library": "\U0001f4da",
+    "export": "↗",
 }
 
 # ======================================================================
@@ -399,3 +436,10 @@ def lerp_color(c1: str, c2: str, t: float) -> str:
     g = int(g1 + (g2 - g1) * t)
     b = int(b1 + (b2 - b1) * t)
     return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def gradient_stops(c1: str, c2: str, steps: int = 6) -> list[str]:
+    """生成 c1 → c2 的渐变色阶列表（自上而下）"""
+    if steps < 2:
+        return [c1]
+    return [lerp_color(c1, c2, i / (steps - 1)) for i in range(steps)]

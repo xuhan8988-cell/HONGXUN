@@ -10,148 +10,22 @@ from datetime import datetime, timedelta
 from calendar import monthrange
 from .session import _session, _session_bulk
 from .abstract import _clean_abstract
+from .journal_db import (
+    resolve_journal_issn,
+    estimate_journal_volume,
+    normalize_journal_name,
+    DEFAULT_ANNUAL_VOLUME,
+)
 
 
-# ── 常见期刊年发文量估算表（篇/年） ─────────────────────────
-# 数据来源：各期刊官网 / ISSN 统计 / 近 3 年平均
-# 命中 10 篇 → 返回 rows = 10 × 年跨度 × 1.5 倍裕量
-ESTIMATED_VOLUME: dict[str, int] = {
-    # ===== 综合 / 跨学科 =====
-    "nature": 1000,
-    "science": 900,
-    "pnas": 3500,
-    "nature communications": 6000,
-    "scientific reports": 20000,
-    "plos one": 12000,
-    "iscience": 3000,
-    "advanced science": 2500,
-    "the innovation": 400,
-    "national science review": 200,
-    "research": 800,
-    # ===== 医学 / 临床 =====
-    "the lancet": 400,
-    "lancet": 400,
-    "new england journal of medicine": 400,
-    "nejm": 400,
-    "jama": 300,
-    "bmj": 2000,
-    "nature medicine": 400,
-    "cell": 500,
-    "cell reports": 2000,
-    "cell research": 200,
-    "cancer cell": 200,
-    "immunity": 300,
-    # ===== 材料 / 工程 =====
-    "nature materials": 300,
-    "nature nanotechnology": 300,
-    "advanced materials": 4000,
-    "advanced functional materials": 3000,
-    "acs nano": 3000,
-    "nano letters": 2000,
-    "nano today": 400,
-    "chemistry of materials": 1500,
-    "materials today": 400,
-    "matter": 400,
-    "cement and concrete research": 600,
-    "cement and concrete composites": 600,
-    "construction and building materials": 3000,
-    "journal of building engineering": 2000,
-    "engineering structures": 2000,
-    "structural concrete": 600,
-    "magazine of concrete research": 300,
-    "journal of materials in civil engineering": 800,
-    "acs sustainable chemistry & engineering": 3000,
-    "journal of cleaner production": 6000,
-    "resources, conservation and recycling": 1500,
-    "waste management": 1500,
-    # ===== 化学 =====
-    "journal of the american chemical society": 5000,
-    "angewandte chemie": 4000,
-    "chemical reviews": 300,
-    "chemical society reviews": 400,
-    "chemical science": 2500,
-    "chemical communications": 5000,
-    "green chemistry": 1500,
-    "dalton transactions": 3000,
-    # ===== 物理 =====
-    "physical review letters": 5000,
-    "physical review b": 8000,
-    "physical review d": 6000,
-    "applied physics letters": 4000,
-    "journal of applied physics": 3000,
-    "nano energy": 2000,
-    # ===== 环境 / 地球 =====
-    "environmental science & technology": 3000,
-    "water research": 2500,
-    "environmental pollution": 3000,
-    "journal of hazardous materials": 4000,
-    "science of the total environment": 8000,
-    "chemosphere": 4000,
-    "atmospheric environment": 2000,
-    "geophysical research letters": 4000,
-    "earth and planetary science letters": 1000,
-    # ===== 计算机 / AI =====
-    "nature machine intelligence": 300,
-    "ieee transactions on pattern analysis and machine intelligence": 800,
-    "ieee transactions on neural networks and learning systems": 1500,
-    "ieee transactions on image processing": 1500,
-    "ieee transactions on information theory": 1000,
-    "pattern recognition": 2000,
-    "computer vision and image understanding": 400,
-    "neural networks": 1000,
-    "machine learning": 300,
-    "journal of machine learning research": 400,
-    "artificial intelligence": 400,
-    "expert systems with applications": 4000,
-    "knowledge-based systems": 2000,
-    "information sciences": 4000,
-    "computers in human behavior": 2000,
-    "ieee access": 15000,
-    # ===== 生物 =====
-    "cell": 500,
-    "nature genetics": 300,
-    "nature cell biology": 200,
-    "nature reviews molecular cell biology": 100,
-    "molecular cell": 600,
-    "developmental cell": 300,
-    "current biology": 1000,
-    "elife": 3000,
-    "the embo journal": 600,
-    "the plant cell": 400,
-    "plant physiology": 1000,
-    # ===== 神经 / 心理 =====
-    "nature neuroscience": 300,
-    "neuron": 600,
-    "journal of neuroscience": 3000,
-    "brain": 500,
-    "neuroimage": 2000,
-    "human brain mapping": 800,
-    # ===== 经济学 / 社科 =====
-    "the quarterly journal of economics": 60,
-    "american economic review": 300,
-    "journal of political economy": 60,
-    "econometrica": 80,
-    "journal of econometrics": 400,
-    "journal of finance": 100,
-    "journal of financial economics": 150,
-    "the review of financial studies": 100,
-}
-
-# 兜底：当期刊名称未在估算表中时，使用该默认值（中等规模期刊）
-DEFAULT_ANNUAL_VOLUME = 2000
+# ── 兼容旧版 import —— search.py 仍导出这些符号供 engine.py 等调用 ──
+ESTIMATED_VOLUME: dict[str, int] = {}
+COMMON_JOURNALS: dict[str, list[str]] = {}
 
 
 def estimate_annual_volume(journal_name: str) -> int:
-    """根据期刊名称估算年发文量。不区分大小写，精确匹配优先。"""
-    key = journal_name.strip().lower()
-    # 精确匹配
-    if key in ESTIMATED_VOLUME:
-        return ESTIMATED_VOLUME[key]
-    # 前缀匹配（如 "ieee transactions on xxx" 系列）
-    for known_key, vol in ESTIMATED_VOLUME.items():
-        if known_key.startswith(key) or key.startswith(known_key):
-            return vol
-    return DEFAULT_ANNUAL_VOLUME
+    """根据期刊名称估算年发文量。委托 journal_db。"""
+    return estimate_journal_volume(journal_name)
 
 
 def calc_max_per_journal(journal_names: list[str],
@@ -184,26 +58,23 @@ def calc_max_per_journal(journal_names: list[str],
 def resolve_journal_to_issn(journal_name: str, base_url: str,
                             works_url: str = None,
                             session=None) -> list[str]:
-    """通过CrossRef期刊API将期刊名称解析为ISSN列表（精确匹配优先）"""
+    """通过本地期刊数据库 + CrossRef API 将期刊名称解析为ISSN列表。
+
+    查询顺序：
+    1. 本地数据库 journal_db.py（覆盖中科院一区+二区top，含别名）
+    2. CrossRef 期刊 API 精确匹配
+    3. CrossRef 期刊 API 模糊匹配
+    4. CrossRef works API 反向查询
+    """
     if session is None:
         session = _session
 
-    COMMON_JOURNALS = {
-        "science": ["0036-8075", "1095-9203"],
-        "nature": ["0028-0836", "1476-4687"],
-        "cell": ["0092-8674", "1097-4172"],
-        "pnas": ["0027-8424", "1091-6490"],
-        "the lancet": ["0140-6736", "1474-547X"],
-        "lancet": ["0140-6736", "1474-547X"],
-        "new england journal of medicine": ["0028-4793", "1533-4406"],
-        "nejm": ["0028-4793", "1533-4406"],
-        "jama": ["0098-7484", "1538-3598"],
-        "bmj": ["0959-535X", "1759-2151"],
-    }
-    key = journal_name.strip().lower()
-    if key in COMMON_JOURNALS:
-        return COMMON_JOURNALS[key]
+    # 1. 本地数据库优先
+    local_result = resolve_journal_issn(journal_name)
+    if local_result:
+        return local_result
 
+    # 2-4. CrossRef API 查询（原逻辑保留）
     params = {"query": journal_name, "rows": 15}
     try:
         resp = session.get(base_url, params=params, timeout=15)
@@ -212,16 +83,16 @@ def resolve_journal_to_issn(journal_name: str, base_url: str,
 
         for item in items:
             title = (item.get("title") or item.get("name") or "").strip()
-            if title.lower() == journal_name.lower():
+            if title.lower() == normalize_journal_name(journal_name):
                 issns = list(set(item.get("ISSN", []) + item.get("issn", [])))
                 if issns:
                     return issns
 
         for item in items:
             title = (item.get("title") or item.get("name") or "").lower()
-            if journal_name.lower() in title:
-                idx = title.find(journal_name.lower())
-                after_char = title[idx + len(journal_name):idx + len(journal_name) + 1] if idx >= 0 else ""
+            if normalize_journal_name(journal_name) in title:
+                idx = title.find(normalize_journal_name(journal_name))
+                after_char = title[idx + len(normalize_journal_name(journal_name)):idx + len(normalize_journal_name(journal_name)) + 1] if idx >= 0 else ""
                 before_char = title[idx - 1:idx] if idx > 0 else ""
                 if before_char and before_char.isalpha():
                     continue
@@ -233,8 +104,8 @@ def resolve_journal_to_issn(journal_name: str, base_url: str,
 
         for item in items:
             title = (item.get("title") or item.get("name") or "").lower()
-            if title.startswith(journal_name.lower()):
-                after = title[len(journal_name):len(journal_name)+1]
+            if title.startswith(normalize_journal_name(journal_name)):
+                after = title[len(normalize_journal_name(journal_name)):len(normalize_journal_name(journal_name))+1]
                 if after and after.isalpha():
                     continue
                 issns = list(set(item.get("ISSN", []) + item.get("issn", [])))
@@ -244,7 +115,7 @@ def resolve_journal_to_issn(journal_name: str, base_url: str,
         if len(journal_name) >= 8:
             for item in items:
                 title = (item.get("title") or item.get("name") or "").lower()
-                if journal_name.lower() in title:
+                if normalize_journal_name(journal_name) in title:
                     issns = list(set(item.get("ISSN", []) + item.get("issn", [])))
                     if issns:
                         return list(set(issns))

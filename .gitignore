@@ -6,6 +6,12 @@ __pycache__/
 dist/
 build/
 *.spec
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
 
 # IDE
 .vscode/
@@ -20,6 +26,10 @@ Thumbs.db
 # Data (runtime-generated, not tracked)
 client/data/*
 !client/data/code_manifest.json
+!client/data/journals_seed.json
+
+# Output files
+output/
 
 # Logs
 *.log
@@ -27,14 +37,19 @@ client/data/*
 # Secrets
 .env
 *.key
+.github_token
 
-# Build artifacts (moved to macos/ and windows/)
-macos/HONGXUN-ZZU.app/
+# Build artifacts
 windows/build_exe.py
 windows/build_exe.bat
 windows/tools/
 windows/HONGXUN.exe
+build_exe.py
 
-# Project metadata
-PROJECT_SUMMARY.md
-UI设计建议.md
+# Backup
+_backup/
+
+# Claude worktrees
+.claude/
+鸿讯HONGXUN_Windows使用说明.doc
+鸿讯HONGXUN_macOS使用说明.doc

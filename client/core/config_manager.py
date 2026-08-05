@@ -54,8 +54,27 @@ def _load_json(file_path, default):
 
 
 def _save_json(file_path, data):
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """原子写入：先写临时文件，再 rename 覆盖原文件。
+
+    避免写入中断（进程崩溃、磁盘满等）导致文件损坏。
+    os.replace 是原子操作（POSIX rename），写入过程不会破坏原文件。
+    """
+    dir_name = os.path.dirname(file_path)
+    os.makedirs(dir_name, exist_ok=True)
+    tmp_path = file_path + ".tmp." + str(os.getpid())
+    try:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, file_path)
+    except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        raise
 
 
 # -------------------- 输入校验 --------------------
@@ -80,7 +99,7 @@ def validate_journals(journal_str: str) -> tuple[list[str], list[str]]:
     """校验期刊名称输入，返回(合法列表, 错误信息列表)"""
     errors = []
     if not journal_str.strip():
-        errors.append("期刊输入框不能为空")
+        errors.append("请至少选择 1 本期刊")
         return [], errors
 
     items = _split_items(journal_str)
@@ -299,11 +318,18 @@ def load_push_records() -> dict:
 
 
 def add_push_record(task_id: str, doi_list: list[str]) -> None:
+    """添加推送记录，自动去重并保留最近 5000 条。
+
+    使用 merge-on-write 模式，与 GUI 或前一次推送并发安全。
+    """
+    def _do_add(records):
+        if task_id not in records:
+            records[task_id] = []
+        records[task_id].extend(doi_list)
+        records[task_id] = list(set(records[task_id]))[-5000:]
+
     records = load_push_records()
-    if task_id not in records:
-        records[task_id] = []
-    records[task_id].extend(doi_list)
-    records[task_id] = list(set(records[task_id]))[-5000:]  # 保留最近5000条
+    _do_add(records)
     _save_json(RECORDS_FILE, records)
 
 
@@ -311,9 +337,16 @@ def add_push_record(task_id: str, doi_list: list[str]) -> None:
 def load_app_config() -> dict:
     """加载应用级配置，返回配置字典"""
     default = {
-        # 14天免费试用
+        # 7天免费试用
         "trial_started": None,   # 首次启动时的 ISO 时间戳
         "trial_notified": False, # 是否已弹出试用提示
+        # 每日推送时间（HH:MM，默认 08:00）
+        "push_time": "08:00",
+        # AI 翻译（LLM 大模型）配置
+        "translate_enabled": False,      # 是否开启 AI 翻译
+        "llm_provider": "deepseek",      # 厂商: deepseek / doubao / minimax / custom
+        "llm_base_url": "",              # 自定义 base URL（空则用厂商预设）
+        "llm_model": "",                 # 模型名（豆包为推理接入点 ID）
     }
     return _load_json(APP_CONFIG_FILE, default)
 

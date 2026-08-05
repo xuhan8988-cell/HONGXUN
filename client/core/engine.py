@@ -387,61 +387,55 @@ def run_history_search(task_id: str, task_data: dict, file_path: str,
     3. 用补全后的标题+摘要匹配 keywords1（仅保留至少匹配一个关键词的论文）
     4. 翻译（仅在全部过滤完成后执行）
 
-    时间范围自动按月度切割，逐月检索后合并，避免 cursor 翻页不稳定。
+    时间范围自动按周切割（每 7 天一个窗口），逐周检索后合并，
+    避免单次跨度过大导致 CrossRef 漏检（ISSN 最大文献获取量限制）。
     """
     # 使用 keep_awake 防止电脑休眠
     with keep_awake():
         if progress_callback:
             progress_callback(0.0, "搜索论文中...")
 
-        # ========== 按月切割时间范围，逐月检索 ==========
-        from calendar import monthrange
+        # ========== 按周切割时间范围，逐周检索 ==========
         start_dt = datetime.strptime(task_data["date_start"], "%Y-%m-%d")
         end_dt = datetime.strptime(task_data["date_end"], "%Y-%m-%d")
 
-        # 生成月份列表（每月 1 日）
-        months = []
-        cursor = start_dt.replace(day=1)
+        # 生成周窗口列表（每 7 天一段）
+        weeks = []
+        cursor = start_dt
         while cursor <= end_dt:
-            months.append(cursor)
-            if cursor.month == 12:
-                cursor = cursor.replace(year=cursor.year + 1, month=1)
-            else:
-                cursor = cursor.replace(month=cursor.month + 1)
+            w_end = cursor + timedelta(days=6)
+            if w_end > end_dt:
+                w_end = end_dt
+            weeks.append((cursor, w_end))
+            cursor = w_end + timedelta(days=1)
 
-        total_months = len(months)
+        total_weeks = len(weeks)
         seen_dois = set()
         all_papers = []
 
-        for mi, m_first in enumerate(months):
+        for wi, (w_first, w_last) in enumerate(weeks):
             # 检查取消请求
             _check_token = cancel_token or "default"
             if is_search_cancelled(_check_token):
                 unregister_search_cancel(_check_token)
                 raise KeyboardInterrupt("检索已取消")
 
-            # 当月最后一天
-            _, last_day = monthrange(m_first.year, m_first.month)
-            m_last = m_first.replace(day=last_day)
-            if m_last > end_dt:
-                m_last = end_dt
-
-            m_start_str = m_first.strftime("%Y-%m-%d")
-            m_end_str = m_last.strftime("%Y-%m-%d")
+            w_start_str = w_first.strftime("%Y-%m-%d")
+            w_end_str = w_last.strftime("%Y-%m-%d")
 
             if progress_callback:
-                progress_callback(0.0 + (mi / total_months) * 0.18,
-                                  f"检索 {m_start_str} ～ {m_end_str}（{mi+1}/{total_months}月）")
+                progress_callback(0.0 + (wi / total_weeks) * 0.18,
+                                  f"检索 {w_start_str} ～ {w_end_str}（{wi+1}/{total_weeks}周）")
 
-            month_papers = search_papers(
+            week_papers = search_papers(
                 task_data["journals"],
-                m_start_str, m_end_str,
+                w_start_str, w_end_str,
                 keywords=task_data.get("keywords"),
-                progress_callback=None,  # 月度检索内部不传进度，避免嵌套回调
+                progress_callback=None,  # 周度检索内部不传进度，避免嵌套回调
             )
 
-            # 月度去重合并
-            for p in month_papers:
+            # 周度去重合并
+            for p in week_papers:
                 doi = p.get("doi", "")
                 key = doi or (p.get("container_title", "") + p.get("title", ""))
                 if key and key not in seen_dois:
@@ -482,6 +476,16 @@ def run_history_search(task_id: str, task_data: dict, file_path: str,
         if progress_callback:
             progress_callback(0.45, f"关键词匹配完成，保留{len(papers)}篇")
 
+        # 4. 翻译（仅在全部过滤完成后执行）
+        from .translator import translate_papers as _do_translate
+        from .config_manager import load_app_config
+        _cfg_key = load_app_config()
+        _translate_enabled = _cfg_key.get("translate_enabled", False)
+        if _translate_enabled:
+            if progress_callback:
+                progress_callback(0.50, "AI翻译中...")
+            _do_translate(papers, enabled=True)
+
         if progress_callback:
             progress_callback(0.45, "准备生成报告...")
 
@@ -506,6 +510,11 @@ def run_increment_check(task_id: str, task_data: dict, start_str: str = None, en
     补全摘要即发送。关键词仅用于历史检索。
 
     start_str / end_str: 可选自定义时间范围，默认向前 24 小时。
+
+    时间窗口处理：
+    CrossRef 的 from-index-date 使用 UTC 时间，而调度器在 CST (UTC+8) 运行。
+    为消除时区导致的漏检风险，实际查询窗口在传入时间基础上向两端各扩展 12 小时，
+    由 push_records 去重保证不重复推送。
     """
     end_dt = datetime.now()
     if end_str:
@@ -521,6 +530,10 @@ def run_increment_check(task_id: str, task_data: dict, start_str: str = None, en
     else:
         start_dt = end_dt - timedelta(hours=24)
 
+    # 扩展窗口：各向外扩 12 小时，消除 UTC/CST 时区偏移导致的漏检
+    start_dt = start_dt - timedelta(hours=12)
+    end_dt = end_dt + timedelta(hours=12)
+
     start_str_fmt = start_dt.strftime("%Y-%m-%d")
     end_str_fmt = end_dt.strftime("%Y-%m-%d")
 
@@ -535,6 +548,13 @@ def run_increment_check(task_id: str, task_data: dict, start_str: str = None, en
 
     # 补全摘要，不按关键词过滤，所有论文均保留
     papers = enrich_abstract(papers)
+
+    # 增量翻译
+    from .config_manager import load_app_config
+    _cfg_inc = load_app_config()
+    if _cfg_inc.get("translate_enabled", False):
+        from .translator import translate_papers as _do_translate_inc
+        _do_translate_inc(papers, enabled=True)
 
     pushed = load_push_records().get(task_id, [])
     new_papers = [p for p in papers if p["doi"] not in pushed]

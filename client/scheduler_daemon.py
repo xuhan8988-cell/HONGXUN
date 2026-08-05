@@ -99,6 +99,28 @@ def _write_result(has_new: bool, total: int, task_details: str = "", *, unsent_a
         json.dump(result, f, indent=2)
 
 
+def _write_llm_failure(reason: str):
+    """写入 LLM 翻译失败标记，供 GUI 轮询弹窗提示用户。"""
+    result = {
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "llm_failed": True,
+        "reason": reason,
+    }
+    try:
+        with open(RESULT_FILE, "w", encoding='utf-8') as f:
+            json.dump(result, f, indent=2)
+    except Exception:
+        pass
+    # 同时在 state 中标记，GUI 启动时也能读到
+    try:
+        state = _load_state()
+        state["llm_failed"] = True
+        state["llm_failed_reason"] = reason
+        _save_state(state)
+    except Exception:
+        pass
+
+
 # ============ 调度逻辑 ============
 CHECK_INTERVAL = 5  # 等待时的轮询间隔（秒）
 
@@ -138,7 +160,15 @@ def run_scheduler():
             return
 
         now = datetime.now()
-        today_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        # 推送时间从 app_config.json 读取（HH:MM，默认 08:00）
+        try:
+            _cfg = json.load(open(os.path.join(DATA_DIR, "app_config.json"), encoding="utf-8"))
+            _push_hh, _push_mm = (str(_cfg.get("push_time", "08:00")).split(":") + ["00", "00"])[:2]
+            _push_hh = int(_push_hh)
+            _push_mm = int(_push_mm)
+        except Exception:
+            _push_hh, _push_mm = 8, 0
+        today_8am = now.replace(hour=_push_hh, minute=_push_mm, second=0, microsecond=0)
         if now < today_8am:
             next_run = today_8am
         else:
@@ -249,6 +279,15 @@ def _do_execute_push():
             else:
                 _log(f"任务「{task['name']}」无新增论文")
         except Exception as e:
+            # LLM 翻译失败 → 写入失败标记并中止本次推送（不更新 last_run_end_ts）
+            try:
+                from core.translator import TranslationError
+            except Exception:
+                TranslationError = None
+            if TranslationError is not None and isinstance(e, TranslationError):
+                _log(f"LLM 翻译失败，中止每日推送: {e}", "error")
+                _write_llm_failure(str(e))
+                return
             _log(f"任务「{task.get('name', tid)}」增量检查失败: {e}", "error")
 
     if all_results:

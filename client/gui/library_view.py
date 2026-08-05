@@ -7,9 +7,10 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+import os
 import webbrowser
 from gui.theme import COLORS, ICONS, FONT_BODY, FONT_BODY_BOLD, FONT_HEADING, FONT_TITLE, FONT_CAPTION, FONT_LABEL
-from gui.widgets import RoundedCard, EmptyState
+from gui.widgets import RoundedCard, EmptyState, ModernButton, ModernScrollbar
 from core.library import (
     get_paper, get_stats, get_all_task_names,
     update_paper_status, batch_update_status,
@@ -25,10 +26,12 @@ STATUS_LABELS = {"pending": "待读", "read": "已读", "excluded": "排除"}
 class QuickLookPanel(tk.Frame):
     """中栏详情预览"""
 
-    def __init__(self, master, on_status_change=None, on_export=None, **kwargs):
+    def __init__(self, master, on_status_change=None, on_export=None,
+                 on_download_pdf=None, **kwargs):
         super().__init__(master, bg=COLORS["bg_page"], **kwargs)
         self._on_status_change = on_status_change
         self._on_export = on_export
+        self._on_download_pdf = on_download_pdf
         self._paper = None
         self._visible = False
         self._build_ui()
@@ -52,10 +55,15 @@ class QuickLookPanel(tk.Frame):
         self._status_btn.pack(side=tk.LEFT, padx=(0, 12))
         self._status_btn.bind("<Button-1>", self._cycle_status)
 
-        self._export_btn = tk.Label(btn_row, text="📤 导出", font=FONT_BODY_BOLD,
+        self._export_btn = tk.Label(btn_row, text="📤 导出为 Zotero", font=FONT_BODY_BOLD,
                                     fg=COLORS["primary"], bg=COLORS["bg_page"], cursor="hand2")
         self._export_btn.pack(side=tk.LEFT)
         self._export_btn.bind("<Button-1>", lambda e: self._on_export(self._paper) if self._on_export else None)
+
+        self._pdf_btn = tk.Label(btn_row, text="⬇ 下载 PDF", font=FONT_BODY_BOLD,
+                                 fg=COLORS["primary"], bg=COLORS["bg_page"], cursor="hand2")
+        self._pdf_btn.pack(side=tk.LEFT, padx=(12, 0))
+        self._pdf_btn.bind("<Button-1>", self._download_click)
 
         tk.Frame(self, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=16, pady=(0, 8))
 
@@ -65,8 +73,8 @@ class QuickLookPanel(tk.Frame):
                                       padx=16, pady=4, state=tk.DISABLED)
         self._abstract_text.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
 
-        scroll = ttk.Scrollbar(self._abstract_text, orient=tk.VERTICAL,
-                               command=self._abstract_text.yview)
+        scroll = ModernScrollbar(self._abstract_text, width=8,
+                                 command=self._abstract_text.yview)
         self._abstract_text.configure(yscrollcommand=scroll.set)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
@@ -93,9 +101,16 @@ class QuickLookPanel(tk.Frame):
         self._current_index = current_index
         self._visible = True
 
-        self._title_label.configure(text=paper.get("title", ""))
+        # 中英双语标题
+        title = paper.get("title", "")
+        title_cn = paper.get("title_cn", "")
+        display_title = title
+        if title_cn:
+            display_title = f"{title}\n{title_cn}"
+        self._title_label.configure(text=display_title)
         self._authors_label.configure(text=paper.get("authors", ""))
         self._update_status_btn()
+        self._update_pdf_btn()
         self._update_abstract()
         self._update_nav()
 
@@ -115,9 +130,13 @@ class QuickLookPanel(tk.Frame):
         if not self._paper:
             return
         abstract = self._paper.get("abstract", "") or "暂无摘要"
+        abstract_cn = self._paper.get("abstract_cn", "")
+        display = abstract
+        if abstract_cn:
+            display = f"{abstract}\n\n【中文摘要】\n{abstract_cn}"
         self._abstract_text.configure(state=tk.NORMAL)
         self._abstract_text.delete("1.0", tk.END)
-        self._abstract_text.insert("1.0", abstract)
+        self._abstract_text.insert("1.0", display)
         self._abstract_text.configure(state=tk.DISABLED)
 
     def _update_status_btn(self):
@@ -126,6 +145,27 @@ class QuickLookPanel(tk.Frame):
         status = self._paper.get("status", "pending")
         icon = STATUS_ICON.get(status, "○")
         self._status_btn.configure(text=f"{icon} {status}", fg=STATUS_COLORS.get(status, COLORS["text_secondary"]))
+
+    def _update_pdf_btn(self):
+        if not self._paper:
+            self._pdf_btn.configure(text="⬇ 下载 PDF")
+            return
+        path = self._paper.get("pdf_path") or ""
+        if path and os.path.exists(path):
+            self._pdf_btn.configure(text="📄 已下载 · 打开")
+        else:
+            self._pdf_btn.configure(text="⬇ 下载 PDF")
+
+    def _download_click(self, event=None):
+        if not self._paper:
+            return
+        if not self._on_download_pdf:
+            return
+        path = self._paper.get("pdf_path") or ""
+        if path and os.path.exists(path):
+            self._on_download_pdf(self._paper, reopen=True)
+        else:
+            self._on_download_pdf(self._paper, reopen=False)
 
     def _update_nav(self):
         if self._papers_list and len(self._papers_list) > 0:
@@ -157,8 +197,10 @@ class QuickLookPanel(tk.Frame):
 class MetadataCard(RoundedCard):
     """右侧元数据卡片"""
 
-    def __init__(self, master, **kwargs):
-        super().__init__(master, bg_color=COLORS["bg_card"], pad=12, hover_elevate=False, shadow=False, scrollable=False, **kwargs)
+    def __init__(self, master, hover_elevate=False, shadow=False, **kwargs):
+        super().__init__(master, bg_color=COLORS["bg_card"], pad=12,
+                         hover_elevate=hover_elevate, shadow=shadow,
+                         scrollable=False, **kwargs)
 
         self._title_label = tk.Text(self.content, wrap=tk.WORD, font=FONT_BODY_BOLD,
                                       fg=COLORS["text_title"], bg=COLORS["bg_card"],
@@ -200,8 +242,8 @@ class MetadataCard(RoundedCard):
                                        fg=COLORS["text_body"], bg=COLORS["bg_card"],
                                        borderwidth=0, highlightthickness=0,
                                        padx=0, pady=2, height=8, state=tk.DISABLED)
-        self._abstract_scroll = ttk.Scrollbar(self._abstract_text, orient=tk.VERTICAL,
-                                               command=self._abstract_text.yview)
+        self._abstract_scroll = ModernScrollbar(self._abstract_text, width=8,
+                                                command=self._abstract_text.yview)
         self._abstract_text.configure(yscrollcommand=self._abstract_scroll.set)
         self._abstract_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
@@ -222,10 +264,15 @@ class MetadataCard(RoundedCard):
         self._abstract_text.pack(fill=tk.BOTH, expand=True)
         self._state = "show"
 
+        # 中英双语标题
         title = paper.get("title", "") or ""
+        title_cn = paper.get("title_cn", "") or ""
+        display_title = title
+        if title_cn:
+            display_title = f"{title}\n{title_cn}"
         self._title_label.configure(state=tk.NORMAL)
         self._title_label.delete("1.0", tk.END)
-        self._title_label.insert("1.0", title)
+        self._title_label.insert("1.0", display_title)
         self._title_label.configure(state=tk.DISABLED)
 
         journal = paper.get("container_title", "") or ""
@@ -252,9 +299,13 @@ class MetadataCard(RoundedCard):
         self._task_label.configure(text=f"📎 {task}" if task else "")
 
         abstract = paper.get("abstract", "") or ""
+        abstract_cn = paper.get("abstract_cn", "") or ""
+        display_abstract = abstract if abstract else "暂无摘要"
+        if abstract_cn:
+            display_abstract = f"{abstract}\n\n【中文摘要】\n{abstract_cn}"
         self._abstract_text.configure(state=tk.NORMAL)
         self._abstract_text.delete("1.0", tk.END)
-        self._abstract_text.insert("1.0", abstract if abstract else "暂无摘要")
+        self._abstract_text.insert("1.0", display_abstract)
         self._abstract_text.configure(state=tk.DISABLED)
 
     def clear(self):
@@ -290,8 +341,9 @@ class MetadataCard(RoundedCard):
 class LibraryView(ttk.Frame):
     """三栏文献书架——左栏使用 ttk.Treeview 实现高性能列表"""
 
-    def __init__(self, master, **kwargs):
+    def __init__(self, master, on_download_pdf=None, **kwargs):
         super().__init__(master, **kwargs)
+        self._on_download_pdf = on_download_pdf
         self._papers = []
         self._paper_map = {}
         self._ql_paper = None
@@ -328,9 +380,15 @@ class LibraryView(ttk.Frame):
 
         self._search_var = tk.StringVar()
         search_entry = tk.Entry(toolbar, textvariable=self._search_var,
-                                bd=1, relief="solid", highlightthickness=0,
+                                bd=1, relief="solid", highlightthickness=2,
+                                highlightbackground=COLORS["input_border"],
+                                highlightcolor=COLORS["input_border"],
                                 bg=COLORS["bg_input"], fg=COLORS["text_body"],
                                 insertbackground=COLORS["text_body"], font=FONT_BODY)
+        search_entry.bind("<FocusIn>", lambda e: search_entry.configure(
+            highlightbackground=COLORS["primary"], highlightcolor=COLORS["primary"]))
+        search_entry.bind("<FocusOut>", lambda e: search_entry.configure(
+            highlightbackground=COLORS["input_border"], highlightcolor=COLORS["input_border"]))
         search_entry.grid(row=0, column=4, sticky=tk.EW, padx=(0, 8), ipadx=4)
         search_entry.bind("<Return>", lambda e: self._refresh())
 
@@ -339,16 +397,22 @@ class LibraryView(ttk.Frame):
         search_btn.grid(row=0, column=5, padx=(0, 8))
         search_btn.bind("<Button-1>", lambda e: self._refresh())
 
-        export_btn = ttk.Button(toolbar, text="📤 导出 RIS", style="Primary.TButton",
-                                command=self._export_ris)
+        export_btn = ModernButton(toolbar, text=f" {ICONS['export']} 导出为 Zotero 格式",
+                                variant="primary",
+                                command=self._export_ris, height=32)
         export_btn.grid(row=0, column=6, padx=(0, 4))
+
+        self._dl_toolbar_btn = ModernButton(
+            toolbar, text="⬇ 下载 PDF", variant="secondary",
+            command=self._toolbar_download, height=32)
+        self._dl_toolbar_btn.grid(row=0, column=7, padx=(0, 4))
 
         # ── Row 1: Three-column PanedWindow ──
         self._pane = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         self._pane.grid(row=1, column=0, sticky=tk.NSEW)
 
         # ─ Left Panel: Treeview ──
-        self._left_panel = tk.Frame(self._pane, bg=COLORS["bg_page"])
+        self._left_panel = tk.Frame(self._pane, bg=COLORS["sidebar_bg"])
         self._pane.add(self._left_panel, weight=1)
 
         self._tree = ttk.Treeview(
@@ -371,6 +435,29 @@ class LibraryView(ttk.Frame):
         self._tree.column("task", width=100, minwidth=60)
         self._tree.column("id", width=0, stretch=False)
 
+        # 树形样式：冷色调、行高更舒适
+        _tstyle = ttk.Style()
+        try:
+            _tstyle.configure("Library.Treeview",
+                              background=COLORS["bg_card"],
+                              fieldbackground=COLORS["bg_card"],
+                              foreground=COLORS["text_body"],
+                              borderwidth=0,
+                              rowheight=26,
+                              font=FONT_BODY)
+            _tstyle.map("Library.Treeview",
+                        background=[("selected", COLORS["selected_bg"])],
+                        foreground=[("selected", COLORS["selected_fg"])])
+            _tstyle.configure("Library.Treeview.Heading",
+                              background=COLORS["sidebar_bg"],
+                              foreground=COLORS["text_secondary"],
+                              font=FONT_BODY_BOLD,
+                              borderwidth=0,
+                              relief="flat")
+            self._tree.configure(style="Library.Treeview")
+        except Exception:
+            pass
+
         self._tree.tag_configure("status_pending", foreground=STATUS_COLORS["pending"])
         self._tree.tag_configure("status_read", foreground=STATUS_COLORS["read"])
         self._tree.tag_configure("status_excluded", foreground=STATUS_COLORS["excluded"])
@@ -382,8 +469,8 @@ class LibraryView(ttk.Frame):
         self._tree.bind("<Key-space>", self._toggle_quicklook)
         self._tree.bind("<Escape>", lambda e: self._hide_ql())
 
-        tree_scroll = ttk.Scrollbar(self._left_panel, orient=tk.VERTICAL,
-                                    command=self._tree.yview)
+        tree_scroll = ModernScrollbar(self._left_panel, width=8,
+                                      command=self._tree.yview)
         self._tree.configure(yscrollcommand=tree_scroll.set)
 
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -394,13 +481,14 @@ class LibraryView(ttk.Frame):
             self._pane,
             on_status_change=self._on_ql_status_change,
             on_export=lambda p: None,
+            on_download_pdf=self._on_download_pdf,
         )
 
         # ─ Right Panel: Metadata ──
         self._right_panel = tk.Frame(self._pane, bg=COLORS["sidebar_bg"], width=220)
         self._pane.add(self._right_panel, weight=0)
 
-        self._meta_card = MetadataCard(self._right_panel)
+        self._meta_card = MetadataCard(self._right_panel, hover_elevate=True, shadow=True)
         self._meta_card.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
         stats_frame = tk.Frame(self._right_panel, bg=COLORS["bg_card"],
@@ -648,7 +736,7 @@ class LibraryView(ttk.Frame):
         text_w.insert("1.0", abstract)
         text_w.configure(state=tk.DISABLED)
 
-        scroll = ttk.Scrollbar(text_w, orient=tk.VERTICAL, command=text_w.yview)
+        scroll = ModernScrollbar(text_w, width=8, command=text_w.yview)
         text_w.configure(yscrollcommand=scroll.set)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
@@ -696,6 +784,21 @@ class LibraryView(ttk.Frame):
         if fp:
             export_ris(self._papers, fp)
             messagebox.showinfo("导出成功", f"已导出 {len(self._papers)} 篇论文")
+
+    def _toolbar_download(self):
+        """工具栏下载：对当前选中的论文（单篇）触发 PDF 下载。"""
+        if not self._on_download_pdf:
+            return
+        selected = self._get_selected_papers()
+        if not selected:
+            messagebox.showwarning("提示", "请先在左侧列表选中要下载的论文")
+            return
+        paper = selected[0]
+        path = paper.get("pdf_path") or ""
+        if path and os.path.exists(path):
+            self._on_download_pdf(paper, reopen=True)
+        else:
+            self._on_download_pdf(paper, reopen=False)
 
     def _batch_set_status(self, status):
         sel_ids = [p["id"] for p in self._get_selected_papers() if p.get("id")]
