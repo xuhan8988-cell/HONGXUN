@@ -39,7 +39,24 @@ from .config_manager import (
 )
 
 # 检索引擎（编排层）
-from .engine import run_history_search, run_increment_check, send_combined_email, cancel_current_search, reset_search_cancel, is_search_cancelled, register_search_cancel, unregister_search_cancel, cancel_search
+# 惰性导入：engine → search → session → requests 冷加载约 330ms。用模块级
+# __getattr__ 推迟到真正访问时才导入，加快应用启动（requests/urllib3 不必在启动阶段加载）。
+_ENGINE_NAMES = {
+    "run_history_search", "run_increment_check", "send_combined_email",
+    "cancel_current_search", "reset_search_cancel", "is_search_cancelled",
+    "register_search_cancel", "unregister_search_cancel", "cancel_search",
+}
+_LAZY_SUBMODULES = {"search", "abstract", "translator", "library", "email_sender"}
+
+
+def __getattr__(name):
+    if name in _ENGINE_NAMES:
+        from . import engine as _engine
+        return getattr(_engine, name)
+    if name in _LAZY_SUBMODULES:
+        import importlib
+        return importlib.import_module(f"{__name__}.{name}")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # 礼品券 & 许可管理
 from . import coupon_manager
@@ -52,9 +69,6 @@ from . import auto_updater
 
 # 引入调度守护进程 launchd 管理
 # (launchd 函数由 gui_app.py 直接从 scheduler_daemon 导入，无需经此中转)
-from . import search
-from . import abstract
-from . import email_sender
-from . import library
-from . import translator
+# search / abstract / email_sender / library / translator 经模块级 __getattr__ 惰性提供，
+# 避免启动阶段冷加载 requests/urllib3。
 from .journal_store import JournalStore

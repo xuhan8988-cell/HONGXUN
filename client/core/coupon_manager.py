@@ -21,8 +21,7 @@ import secrets
 import hashlib
 import hmac
 from datetime import datetime, timedelta
-
-import requests
+# requests 惰性导入（函数内）：避免启动阶段冷加载 requests/urllib3（约 300ms）
 
 # 路径处理：兼容 PyInstaller 打包（与 config_manager.py 保持一致）
 if getattr(sys, 'frozen', False):
@@ -58,36 +57,43 @@ NTP_API_URLS = [
 ]
 
 _NETWORK_TIME_CACHE = None
+# 网络时间锁：后台预热与同步调用并发时只发一次请求，其余等待结果
+_NETWORK_TIME_LOCK = None
 
 
 # GitHub 仓库 — 跨机兑换锁
 # registry.json 放在 lpq 私密仓库中
-# ✔ 读取 & ✏ 写入：使用 base64 嵌入的 token（仅限 lpq 仓库 Contents: Read+Write）
+# ✔ 读取 & ✏ 写入：使用 GitHub Token（从环境变量 HONGXUN_GITHUB_TOKEN 读取，
+#   不内嵌在代码中，避免提交仓库时泄露凭据）
 _GITHUB_OWNER = "xuhan8988-cell"
 _GITHUB_REPO = "lpq"
 _GITHUB_BRANCH = "master"
 _GITHUB_REGISTRY_PATH = "registry.json"
 
-# 写入 token（分片组合，防止 GitHub Secret Scanning 检测）
-_GITHUB_WRITE_TOKEN = (
-    "Z2l0aHViX3BhdF8" + "xMUNHVFdLQ1kw" + "MTRhQTFTOVN6" +
-    "VDRyX3lLTjdDcz" + "JBUzhjVTNxc0pk" + "VU0yRFR5M3hR" +
-    "T2N5aDNBSG02UlN" + "YOHMxVGpERjZY" + "QjdHTXlRaGkycjFO"
-)
-
 
 def _get_write_token() -> str:
-    """获取写入 Token（base64 解码组合字符串）"""
-    import base64
+    """获取 GitHub 写入 Token（优先环境变量，其次本地配置文件）。
+
+    不再内嵌硬编码 token（防止提交仓库时泄露）。
+    未配置时返回空串，GitHub 写操作降级为只读/跳过。
+    """
+    token = os.environ.get("HONGXUN_GITHUB_TOKEN", "").strip()
+    if token:
+        return token
+    # 本地配置文件（不入库）
     try:
-        token_b64 = "".join(_GITHUB_WRITE_TOKEN)
-        return base64.b64decode(token_b64).decode("ascii")
+        cfg_path = os.path.join(DATA_DIR, "github_token.txt")
+        if os.path.exists(cfg_path):
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                return f.read().strip()
     except Exception:
-        return ""
+        pass
+    return ""
 
 
 def _fetch_registry_with_sha(token: str) -> tuple[dict | None, str]:
     """通过 API 获取注册表（需要写入 token），返回 (registry_dict, sha)"""
+    import requests
     url = (f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}"
            f"/contents/{_GITHUB_REGISTRY_PATH}")
     try:
@@ -112,19 +118,50 @@ def _fetch_registry() -> tuple[dict | None, str]:
     return _fetch_registry_with_sha(token)
 
 def _get_network_time() -> datetime | None:
-    """从网络获取当前 UTC 时间，失败返回 None"""
-    for url in NTP_API_URLS:
-        try:
-            resp = requests.get(url, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                if "utc_datetime" in data:
-                    return datetime.fromisoformat(data["utc_datetime"].replace("Z", ""))
-                elif "dateTime" in data:
-                    return datetime.fromisoformat(data["dateTime"].replace("Z", ""))
-        except Exception:
-            continue
-    return None
+    """从网络获取当前 UTC 时间，失败返回 None。
+
+    带会话级缓存：_NETWORK_TIME_CACHE 只在成功时缓存，避免启动阶段
+    多次调用（is_activated / is_in_validity / get_expiry_info 都会触发）
+    导致重复 SSL 连接阻塞启动（每次约 1-2 秒）。
+    """
+    global _NETWORK_TIME_CACHE
+    if _NETWORK_TIME_CACHE is not None:
+        return _NETWORK_TIME_CACHE
+    import threading
+    global _NETWORK_TIME_LOCK
+    if _NETWORK_TIME_LOCK is None:
+        _NETWORK_TIME_LOCK = threading.Lock()
+    with _NETWORK_TIME_LOCK:
+        # 双检：等锁期间可能已有其他线程完成预热
+        if _NETWORK_TIME_CACHE is not None:
+            return _NETWORK_TIME_CACHE
+        import requests
+        for url in NTP_API_URLS:
+            try:
+                resp = requests.get(url, timeout=3)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if "utc_datetime" in data:
+                        _NETWORK_TIME_CACHE = datetime.fromisoformat(
+                            data["utc_datetime"].replace("Z", ""))
+                        return _NETWORK_TIME_CACHE
+                    elif "dateTime" in data:
+                        _NETWORK_TIME_CACHE = datetime.fromisoformat(
+                            data["dateTime"].replace("Z", ""))
+                        return _NETWORK_TIME_CACHE
+            except Exception:
+                continue
+        return None
+
+
+def prewarm_network_time():
+    """后台线程预热网络时间缓存，避免启动阶段同步阻塞（约 1.5s）。
+
+    调用方用 threading.Thread 触发；缓存命中后所有 is_activated /
+    is_in_validity / get_expiry_info 立即返回，不再发网络请求。
+    """
+    import threading
+    threading.Thread(target=_get_network_time, daemon=True).start()
 
 
 def get_current_time() -> datetime:
@@ -260,7 +297,8 @@ def batch_generate(count: int = 1000, code_type: str = "1Y") -> list[str]:
 
 def _push_registry(registry: dict, sha: str) -> bool:
     """将更新后的注册表推送到 GitHub（需管理员写入 TOKEN）"""
-    token = _get_github_write_token()
+    import requests
+    token = _get_write_token()
     if not token:
         return False
     import json as _json
@@ -637,21 +675,21 @@ def is_trial_period(net_time: datetime = None) -> tuple[bool, int]:
 
 
 def is_feature_allowed() -> bool:
-    """功能许可检查（7天试用 or 礼品券激活 or 订阅激活，含 3 天宽限期）"""
+    """功能许可检查：已登录（免费版）or 礼品券激活 or 订阅激活。"""
     return is_in_validity()
 
 
-# ── 统一有效期检测（礼品券 / 订阅 / 试用，含宽限期） ────────
+# ── 统一有效期检测（登录 / 礼品券 / 订阅） ────────────────
 GRACE_DAYS = 3
 
 
 def is_in_validity(grace_days: int = GRACE_DAYS) -> bool:
-    """综合判断当前是否处于功能有效期内。
+    """综合判断当前是否可使用功能。
 
-    优先级：订阅激活 → 礼品券激活 → 试用期。
-    到期后在宽限期内仍视为有效（供 UI 提示续费）；宽限期过后才失效。
+    优先级：订阅激活（全功能）→ 礼品券激活（全功能）→ 已登录（免费版）。
+    注册登录即可用基础功能；游客受免费版限制。
     """
-    # 订阅激活
+    # 订阅激活（月/年/永久，全功能）
     try:
         from . import subscription
         if subscription.is_subscription_active():
@@ -673,25 +711,13 @@ def is_in_validity(grace_days: int = GRACE_DAYS) -> bool:
                     return True
         except Exception:
             pass
-    # 试用期
-    trial_ok, _ = is_trial_period()
-    if trial_ok:
-        return True
-    # 试用到期宽限
-    _, trial_remain = is_trial_period()
-    if trial_remain <= 0:
-        record = _load_trial_record()
-        started = record.get("trial_started", "")
-        if started:
-            try:
-                net_time = _get_network_time()
-                if net_time is not None:
-                    start = datetime.fromisoformat(started)
-                    trial_end = start + timedelta(days=TRIAL_DAYS)
-                    if trial_end < net_time and (trial_end + timedelta(days=grace_days)) > net_time:
-                        return True
-            except Exception:
-                pass
+    # 已登录（免费版基础功能）
+    try:
+        from . import user_manager
+        if user_manager.is_logged_in():
+            return True
+    except Exception:
+        pass
     return False
 
 

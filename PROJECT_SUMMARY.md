@@ -1,100 +1,134 @@
-# 鸿讯 HONGXUN · 论文监控工具（郑州大学定制版）
+# 鸿讯 HONGXUN · 论文监控工具
 
 ## 项目概述
 
-面向科研人员的学术论文监控工具，支持 CrossRef 检索、六级摘要补全、邮件推送、macOS 开机自启、Windows 开机自启。
+面向科研人员的学术论文监控工具，支持 CrossRef 检索、六级摘要补全、AI 大模型翻译（英→中）、邮件推送、PDF 下载、文献书架管理、付费订阅与礼品券激活、macOS 开机自启、Windows 开机自启。
 
-- **版本**：1.5.0-ZZU
+- **版本**：2.0.0
 - **技术栈**：Python 3.11 + tkinter/ttk
 - **入口**：`client/gui_app.py`
 - **支持平台**：macOS 10.15+ / Windows 10/11 64位
-- **macOS 启动**：双击 `macos/HONGXUN-ZZU.app`
+- **macOS 启动**：双击 `macos/HONGXUN-TY.app`
 - **Windows 启动**：双击 `dist/HONGXUN/HONGXUN.exe`（需先打包）
-- **版本**：1.5.0-ZZU
 
 ## 目录结构
 
 ```
-HONGXUN-ZZU/
-├── HONGXUN-ZZU.app/             # macOS 应用包
-├── HONGXUN.spec                 # PyInstaller 打包配置
-├── build_exe.bat                # Windows 一键打包脚本
-├── requirements.txt             # Python 依赖清单
-├── 启动.command                  # macOS 终端启动脚本
+HONGXUN-TY/
+├── macos/
+│   ├── HONGXUN-TY.app/         # macOS 应用包
+│   └── 启动.command              # macOS 终端启动脚本
+├── windows/
+│   └── HONGXUN.spec            # Windows PyInstaller 打包配置
+├── requirements.txt            # Python 依赖清单
 ├── tools/
-│   └── generate_icons.py        # 图标生成脚本（PIL 绘制线性图标）
+│   ├── generate_icons.py       # 图标生成脚本（PIL 绘制线性图标）
+│   └── build_journal_db.py     # 期刊数据库构建脚本（4295 本种子数据）
 ├── client/
-│   ├── gui_app.py               # 主程序（Tkinter GUI）— 跨平台
-│   ├── scheduler_daemon.py      # 独立调度守护进程
-│   ├── gui/                     # UI 组件包（重构后拆分）
+│   ├── gui_app.py              # 主程序（Tkinter GUI）— 跨平台
+│   ├── scheduler_daemon.py     # 独立调度守护进程
+│   ├── gui/                    # UI 组件包（模块化）
 │   │   ├── __init__.py
-│   │   ├── theme.py             # 颜色/字体/图标常量 + ttk 样式表
-│   │   ├── widgets.py           # 自定义控件（RoundedCard, ModernButton, StatusPill 等）
-│   │   ├── sidebar.py           # 卡片式任务侧栏
-│   │   └── library_view.py      # 三栏文献书架（列表+详情+元数据）
+│   │   ├── theme.py            # 颜色/字体/图标常量 + ttk 样式表
+│   │   ├── widgets.py          # 自定义控件（RoundedCard, ModernButton, ToggleSwitch 等）
+│   │   ├── sidebar.py          # 侧栏（页面导航 NavItem + 任务卡片列表）
+│   │   ├── dashboard.py        # 首页仪表盘（统计卡 + 最近文献 + 任务状态）
+│   │   ├── library_view.py     # 三栏文献书架（列表+详情+元数据）
+│   │   ├── journal_picker.py   # 期刊选择器（分类树 + 搜索 + 多选）
+│   │   ├── journal_detail.py   # 期刊详情弹窗
+│   │   └── journal_import.py   # 期刊批量导入
 │   ├── core/
-│   │   ├── __init__.py          # 模块统一导出
-│   │   ├── abstract.py          # 六级摘要补全流水线（并行版）
-│   │   ├── code_protector.py    # 底层代码保护（MAC + 密码验证）
-│   │   ├── config_manager.py    # 配置读写、输入校验、路径管理
-│   │   ├── coupon_manager.py    # 礼品券管理 + 14天免费试用（多文件锚定防清理）
-│   │   ├── email_sender.py      # 邮件发送（SSL 465 / TLS 587 双模式）
-│   │   ├── engine.py            # 编排协调层（历史检索/增量检查/报告生成）
-│   │   ├── library.py           # 文献书架数据模型（JSON 持久化）
-│   │   ├── search.py            # CrossRef 检索 + ISSN 解析 + cursor 分页
-│   │   └── session.py           # HTTP Session
-│   ├── data/                    # JSON 持久化（任务/邮箱/许可/推送记录/调度状态）
+│   │   ├── __init__.py         # 模块统一导出
+│   │   ├── abstract.py         # 六级摘要补全流水线（并行版）
+│   │   ├── auto_updater.py     # 自动更新 + 公告广播（GitHub）
+│   │   ├── code_protector.py   # 底层代码保护（MAC + 密码验证）
+│   │   ├── config_manager.py   # 配置读写、输入校验、路径管理
+│   │   ├── coupon_manager.py   # 礼品券管理 + 统一访问控制（登录/订阅/礼品券）
+│   │   ├── email_sender.py     # 邮件发送（SSL 465 / TLS 587 双模式）+ 验证码
+│   │   ├── engine.py           # 编排协调层（历史检索/增量检查/报告生成/AI翻译）
+│   │   ├── journal_db.py       # 期刊数据库（SQLite 查询）
+│   │   ├── journal_store.py    # 期刊库（种子灌入 + 收藏 + 浏览历史）
+│   │   ├── library.py          # 文献书架数据模型（JSON 持久化）
+│   │   ├── pdf_config.py       # PDF 下载配置
+│   │   ├── pdf_fetcher.py      # PDF 多来源下载（Unpaywall/OpenAlex/arXiv/PMC/Sci-Hub）
+│   │   ├── ref_formatter/      # 参考文献格式化引擎（6 格式 + AI 解析 + 交叉引用）
+│   │   ├── search.py           # CrossRef 检索 + ISSN 解析 + cursor 分页
+│   │   ├── session.py          # HTTP Session
+│   │   ├── user_manager.py     # 邮箱+密码注册登录 + 会话 + 邀请码
+│   │   ├── subscription.py     # 付费订阅（3 档套餐 + 占位支付接口）[锁定]
+│   │   └── translator.py       # AI 大模型翻译（DeepSeek/千问/智谱/豆包/Kimi/MiniMax）
+│   ├── data/                   # JSON 持久化（任务/邮箱/许可/推送记录/调度状态/期刊库）
 │   ├── logo/
-│   │   ├── zm.png               # 应用图标
-│   │   ├── ztl.png              # 标题栏图标
-│   │   ├── qdy.png              # 启动页图片
-│   │   └── icons/               # PIL 生成的 24×24 线性图标 PNG（48 个）
+│   │   ├── zm.png              # 应用图标
+│   │   ├── ztl.png             # 标题栏图标
+│   │   ├── qdy.png             # 启动页图片
+│   │   └── icons/              # PIL 生成的 24×24 线性图标 PNG（两色变体）
 │   └── output/
-│       └── unsent/              # 邮件发送失败的附件备份
-├── docs/                        # 文档目录
-└── dist/                        # PyInstaller 打包输出（需本地构建）
-    └── HONGXUN/
-        ├── HONGXUN.exe          # 打包后的可执行文件
-        └── _data/               # 运行时数据目录（自动生成）
-            └── data/            # 配置/任务/许可数据
+│       └── unsent/             # 邮件发送失败的附件备份
+└── docs/                       # 文档目录
 ```
 
 ## 核心功能
 
+### 页面导航架构（v2.0.0）
+
+应用采用「左侧栏 + 右侧页面容器」的单窗口布局，侧栏顶部为 4 个页面导航项：
+
+| 页面 | 说明 |
+|------|------|
+| 📊 概览 | DashboardView：统计卡 + 最近文献 + 任务状态 + 激活状态 + 礼品券/订阅入口 |
+| 📋 监控任务 | 任务表单：任务名、期刊选择器、关键词、日期范围 |
+| 📚 文献书架 | LibraryView：三栏布局（列表 + 详情 + 元数据） |
+| ✏️ 格式助手 | RefFormatterView：参考文献格式化 + AI 自定义格式解析 |
+| ⚙ 设置 | 每日推送 + 邮箱配置 + AI 翻译 + PDF 下载 + 激活状态 |
+
 ### 论文检索
 - CrossRef API，按期刊 + 时间范围检索
 - **Cursor 深度分页**：突破 CrossRef 单页 1000 条限制，自动翻页
-- **按月切割逐月检索**：时间范围自动按月度切割，逐月检索后合并去重
+- **按周切割逐周检索**：时间范围自动按周切割，逐周检索后合并去重（降低漏检）
 - **支持检索取消**：检索过程中可随时点击「取消」按钮中止
 - 关键词过滤流程（仅历史检索）：检索 → 摘要补全 → 用补全的标题+摘要匹配关键词
 - **每日推送不按关键词过滤**：检索期刊所有论文，补全摘要后全部推送
 - 六级摘要补全：OpenAlex → Semantic Scholar（DOI）→ Tavily 搜索引擎
 - 输出格式：DOCX / DOC / TXT / MD
 
+### 智能期刊选择（v2.0.0）
+- 内置中科院 1/2 区 **4295 本期刊库**，按「大类 → 小类 → 分区」三级分类树可视化选择
+- 支持搜索过滤、多选、收藏、详情查看、批量导入（RIS/BIB/CSV/XLSX）
+- 支持手动输入库外期刊
+- SQLite 存储（`journals.db`），首次从种子文件 `journals_seed.json` 灌入
+
+### AI 大模型翻译（v2.0.0）
+- 支持多家 LLM 大模型（OpenAI 兼容接口）：**DeepSeek / 千问 Qwen / 智谱 GLM / 豆包 / Kimi / MiniMax / 自定义**
+- 在「设置 → AI 翻译」中配置厂商 + API Key + Base URL + Model，支持「测试连接」
+- API Key 持久化到 `client/.env`，厂商配置到 `app_config.json`
+- 检索报告与推送邮件中均包含翻译结果（中英双语）
+- **失败中断**：API 调用失败（401/402/403/429）时抛异常 → 中断检索/推送 → 弹窗提示
+- **断点续传**：重启后先检测 API 可用性，可用则继续，不可用则弹窗确认
+
+### PDF 下载（v2.0.0）
+- 多来源回退下载：Unpaywall → OpenAlex → arXiv → PMC → 出版社直连
+- 可选 **Sci-Hub 增强**（开启需阅读版权风险提示 + 5 秒倒计时确认）
+- 文件名：`首作者姓_年份_短标题.pdf`，默认保存到 `~/Downloads/HONGXUN-PDF/`
+
 ### 报告生成（DOCX）
 - 西文 Times New Roman + 中文宋体 SimSun，5号字（10.5pt），固定行间距 18pt
 - 使用文本行格式代替表格，大幅减少 XML 体积
+- 中英双语内容（标题 + 摘要）
 
 ### 邮件推送
 - 任意 SMTP（QQ邮箱/163/126/Gmail/新浪/Outlook/189 等）
 - SMTP 供应商下拉菜单按邮箱类别分组，自动配置服务器地址
 - **多端口自动回退**：同一供应商的多个端口依次尝试（465 → 587）
-- 保存时自动校验邮箱域名与 SMTP 服务器是否匹配，自动修正
 - 发件邮箱 + SMTP 授权码（可显/隐）+ 最多 5 个收件人（动态增删）
-- **每日 8:00** 自动增量检查 → 合并多任务结果 → 一封邮件（每任务一个 DOCX 附件）
+- **每日推送时间可配置**（`app_config.json` 的 `push_time`，默认 08:00）
 - **支持最多 5 个并行任务**
-- **启动时立即检索近一周数据**，合并发送一封邮件
 - 无论文时 GUI 弹窗提示
-- 首次使用可享受 **14 天全部功能免费试用**（试用期内可直接使用邮件推送）
 
 ### 邮件发送失败处理
 - 检索完成后先保存 DOCX 附件到 `output/unsent/`
 - 发送失败时写入 `pending_email.json` 记录未发送文件清单
 - 邮箱设置区提供「再发送」按钮：直接读取本地附件重发
-
-### 推送记录保护
-- 推送记录（`push_records.json`）在邮件成功发送后才写入
-- 发送失败时的论文不会被标记为"已推送"，下次重试可正常识别
 
 ### 独立调度守护进程
 - 与 GUI 进程解耦，GUI 关闭后继续运行
@@ -102,58 +136,103 @@ HONGXUN-ZZU/
 - **macOS 开机自启**（launchd）
 - **Windows 开机自启**（注册表 HKCU\…\Run）
 
-### 14 天免费试用（多文件锚定防清理）
-- 首次安装自动激活，试用记录绑定本机 MAC 地址
-- 试用开始时间同时写入 **5 个锚定文件**（`trial_record.json`、`app_config.json`、`tasks.json`、`scheduler_state.json` 等）
-- 删除单个配置文件会自动从其他文件恢复，无法重置试用期
-- 试用结束后自动关闭付费功能
+### 付费订阅系统（v2.0.0，锁定代码）
+- **3 档订阅套餐**（扫码支付，个人开发者免签约聚合支付）：
 
-### 礼品券激活
-- 24位编码（XX-XX-XX-XX-XX-XX），含 HMAC 防伪签名
-- 设备绑定（MAC 地址），永久有效
-- 会话级缓存：首次调用联网确认，同会话后续瞬时返回
+| 档位 | 现价 | 有效期 | 类型 |
+|------|:----:|:------:|:----:|
+| 1 个月 | **¥9.9** | 30 天 | 限时 |
+| 1 年 | **¥99** | 365 天 | 限时 |
+| 永久 | **¥299** | 永久 | 永久激活 |
+
+- 订阅弹窗：三档套餐卡片 + 蓝色高亮价格卡 + 删除线原价 + 折扣徽章 + 底部保障信息
+- 选中套餐后点「立即解锁」弹出二维码（当前为占位二维码，预留支付平台替换接口）
+- 支付成功自动激活并开始计时，永久档写 `permanent: True`，到期时间写极远（2099-12-31）
+- **订阅代码经 code_protector 锁定**（HONGXUN-LOCKED，仅本机可查看/修改）
+- 支付接入说明见 `subscription.py` 的 `PAYMENT_ADAPTER` 区块（虎皮椒/易支付等免签约平台）
+
+### 邮箱+密码注册登录制（v2.0.0）
+- **注册**：邮箱（用户名）+ 验证码 + 密码（≥6位，含数字+字母）；同一邮箱只能注册一次
+- **验证码**：经内置 QQ 邮箱 SMTP 发送（不依赖用户配置），10 分钟有效，60 秒防重发
+- **密码加密**：加盐 PBKDF2 哈希存储（管理员/仓库均看不到明文）
+- **登录**：邮箱+密码验证，本地 session 持久化；登录后即可使用免费版功能
+- **游客模式**：可浏览界面，不能执行任何功能（检索/保存/导出/PDF下载/格式化均需登录）
+- **账号可见性**：注册邮箱写入 GitHub 注册表 users 列表（密码不可见），管理员可查看账号
+- **邀请码**：用户首次生成专属 8 位唯一码（字母+数字），被邀请人填码注册 → 邀请人 +1 个月全功能
+
+### 统一访问控制（v2.0.0）
+- **免费版（登录即可用）**：检索（每次 1 个任务）、书架（最多 50 篇）、格式助手 GB/T、3 年检索跨度
+- **高级功能**（需订阅）：AI 翻译、全部格式、自定义 AI 解析、邮件推送、Sci-Hub 增强
+- 判断优先级：订阅激活（全功能）→ 礼品券激活（全功能）→ 已登录（免费版）
+- **3 天宽限期**：订阅/礼品券到期后宽限期内仍可用，宽限期后彻底锁定
+- 到期时间显示具体日期（如 `2026-08-30`），永久激活显示「永久」
+
+### 论文格式修改助手（v2.0.0，新增）
+- **6 种标准格式转换**：GB/T 7714 / IEEE / APA 7th / Chicago / MLA / Harvard
+- 左右分栏 UI + 左侧步骤导航（选择文件 → 选择格式 → 选项设置 → 开始处理，完成态持久化）
+- **交叉引用超链接**（Ctrl+Click 跳转）+ 角标上标 + 按引用顺序重排 + 连续引用合并
+- 自动备份原文件、格式校验（悬空引用/编号不连续检测）
+- **AI 自定义格式解析**：上传期刊格式要求文件（PDF/Word/文本）→ LLM 解析 → 确认套用
+- 文件提取：PDF 用 markitdown 转 Markdown，Word 用 python-docx，文本直读
+
+### 礼品券激活（与订阅并存）
+- 24位编码（XXXX-XXXX-XXXX-XXXX-XXXX-XXXX），含 HMAC 防伪签名
+- 支持 3M / 6M / 12M / 24M 有效期类型（多类型券，GitHub 后端）
+- 设备绑定（MAC 地址）
+- **仅首页保留礼品券入口**，受限板块弹窗引导订阅
 
 ### 底层代码保护
-- 11 个 Python 源文件全部受保护（含 HONGXUN-LOCKED 标记）
+- 12 个 Python 源文件受保护（含 HONGXUN-LOCKED 标记）
 - **本机 MAC 自动授权**（`ac:de:48:00:11:22`）
-- 非本机设备需密码 `XHcxy1993.0827` 解锁
+- 非本机设备需密码解锁
+- 保护文件含 `core/subscription.py`（订阅支付逻辑）
+
+### 自动更新 + 公告广播
+- GitHub Release 更新机制，启动时检查版本
+- 公告广播：从仓库读取 `notice.json`，按 `msg_id` 去重弹窗通知
 
 ## UI 架构
 
 ```
 client/
-└── gui/                     # UI 组件包（v1.3.0 重构）
-    ├── theme.py             # 颜色/字体/图标/smtp常量 + ttk 样式表
-    ├── widgets.py           # 自定义 Canvas 控件库
-    ├── sidebar.py           # 卡片式侧栏（替代 Listbox）
-    └── library_view.py      # 三栏书架（替代 Treeview 单表）
+└── gui/                     # UI 组件包
+    ├── theme.py             # 颜色/字体/图标/设计token/smtp常量 + ttk 样式表
+    ├── widgets.py           # 自定义 Canvas 控件库（含 IconButton/LinkButton/Toast/AppState）
+    ├── sidebar.py           # 侧栏（页面导航 + 任务卡片）
+    ├── dashboard.py         # 首页仪表盘
+    ├── library_view.py      # 三栏文献书架
+    ├── ref_formatter_view.py # 论文格式修改助手（步骤导航 + AI 解析流程）
+    ├── journal_picker.py    # 期刊选择器
+    ├── journal_detail.py    # 期刊详情
+    └── journal_import.py    # 期刊导入
 ```
 
-### 颜色体系（v1.3.2 优化版）
+### 颜色体系（v2.0.0 冷色 Slate 基调）
 
 | 角色 | 值 | 用途 |
 |------|------|------|
-| **primary** | `#2563EB` | 主色（Tailwind Blue-600，比 Apple Blue 更沉稳） |
-| primary_hover | `#1D4ED8` | 悬停 |
-| primary_active | `#1E40AF` | 按下 |
+| **primary** | `#3B82F6` | 主色（Blue-500） |
+| primary_2 | `#60A5FA` | 渐变起始（Blue-400） |
+| primary_hover | `#2563EB` | 悬停（Blue-600） |
+| primary_active | `#1D4ED8` | 按下（Blue-700） |
 | primary_light | `#DBEAFE` | 选中/高亮背景 |
-| **success** | `#16A34A` | 成功/运行中 |
-| **warning** | `#D97706` | 警告 |
-| **danger** | `#DC2626` | 错误/排除 |
-| **bg_page** | `#FFFFFF` | 纯白页面背景 |
+| **success** | `#10B981` | 成功/运行中 |
+| **warning** | `#F59E0B` | 警告 |
+| **danger** | `#EF4444` | 错误/排除 |
+| **bg_page** | `#F8FAFC` | 页面背景（Slate-50） |
 | **bg_card** | `#FFFFFF` | 卡片背景 |
-| **sidebar_bg** | `#EAECEF` | 侧栏背景（更深，与页面拉大对比） |
-| text_title | `#111827` | 标题（Gray-900） |
-| text_body | `#1F2937` | 正文（Gray-800） |
-| text_secondary | `#6B7280` | 次要文字（Gray-500） |
-| text_hint | `#9CA3AF` | 占位符（Gray-400） |
+| **sidebar_bg** | `#F1F5F9` | 侧栏背景（Slate-100） |
+| text_title | `#0F172A` | 标题（Slate-900） |
+| text_body | `#1E293B` | 正文（Slate-800） |
+| text_secondary | `#64748B` | 次要文字（Slate-500） |
+| text_hint | `#94A3B8` | 占位符（Slate-400） |
 
-### 字体系统（v1.3.2 调小）
+### 字体系统
 
 | 层级 | 字号（macOS） | 字重 | 用途 |
 |------|:-------------:|:----:|------|
 | FONT_METRIC | 32pt | Bold | 仪表盘数字 |
-| FONT_DISPLAY | 28pt | Bold | 大标题 |
+| FONT_DISPLAY | 32pt | Bold | 大标题 |
 | FONT_TITLE | 15pt | Bold | 页面标题 |
 | FONT_HEADING | 13pt | Bold | 卡片标题 |
 | FONT_BODY | 13pt | Normal | 正文 |
@@ -164,234 +243,66 @@ client/
 - 平台适配：Windows 基准字号 9pt，macOS 13pt
 - 响应式缩放：8~18pt 区间，上限 1.35x
 
-### 布局架构
-
-```
-┌─ toolbar (44px, bg=#FFFFFF) ───────────────────────────┐
-│  ⲎⲬ  HONGXUN · 论文发现工具          更新  说明  反馈   │
-├────────────────────────────────────────────────────────┤
-│ ┌─sidebar(#EAECEF)──┐ ┌─content──────────────────────┐│
-│ │ 📋 监控任务      [+]│ │ Notebook                    ││
-│ │ ┌────────────────┐ │ │ [📋任务设置][📚书架]        ││
-│ │ │● 任务1         │ │ │ ┌────────────────────────┐ ││
-│ │ │● 任务2         │ │ │ │ 内容区                 │ ││
-│ │ └────────────────┘ │ │ └────────────────────────┘ ││
-│ │ ○ 推送未启动       │ │                            ││
-│ └────────────────────┘ └─────────────────────────────┘│
-├─ progress (2px idle / 展开时活跃) ─────────────────────┤
-├─ status (38px, bg=#EAECEF) ────────────────────────────┤
-│ ● 就绪    状态消息...       🔒 郑州大学 v1.0.0 ⏱下次8:00│
-└────────────────────────────────────────────────────────┘
-```
-
-### 文献书架三栏布局
-
-```
-┌─ toolbar ──────────────────────────────────────────────┐
-│ 状态:[全部▾] 任务:[全部▾]  [搜索...]🔍 [📤导出][↻]   │
-├───────────────────┬──────────────────┬──────────────────┤
-│  Treeview 列表    │  详情预览        │  元数据          │
-│  (weight=1)       │  (weight=2)      │  (220px fixed)   │
-│                   │                  │                  │
-│  ● 标题1          │  ## 论文标题     │  📖 Nature       │
-│    作者 et al.    │  作者列表        │  🔗 10.xxx/xxx  │
-│                   │                  │  📅 2026-07     │
-│  ● 标题2          │  摘要全文...      │  🏷 keyword      │
-│    作者 et al.    │                  │  📎 任务1        │
-│                   │  ● 已读  📤导出  │                  │
-│                   │  ← 3/25 →        │                  │
-├───────────────────┴──────────────────┴──────────────────┤
-│  总计: 127  待读: 12  已读: 3  排除: 0                  │
-└────────────────────────────────────────────────────────┘
-```
-
 ## 自定义控件库
 
 | 控件 | 说明 | 技术 |
 |------|------|------|
-| **RoundedCard** | 圆角矩形 + 单层阴影 + 1px 边框 | `tk.Canvas` + `create_polygon(smooth=True)` |
-| **ModernButton** | 圆角按钮，hover 颜色过渡，press 模拟 scale(0.97) | `tk.Canvas` |
+| **RoundedCard** | 圆角矩形 + 阴影 + 边框，支持 fit_content/hover 抬升 | `tk.Canvas` + `create_polygon` |
+| **ModernButton** | 圆角按钮，hover/press 状态，防黑底透色 | `tk.Canvas` |
+| **ModernEntry** | 统一输入框，placeholder + focus 边框 | `tk.Entry` |
+| **ModernScrollbar** | 圆角滚动条，内容放不下时才显示滑块 | `tk.Canvas` |
 | **StatusPill** | 三色状态胶囊（待读/已读/排除） | `tk.Canvas` |
-| **StatusPill** | 图标+文字组合，支持 PNG/PIL/emoji 回退 | `tk.Frame` |
+| **ToggleSwitch** | iOS 风格开关，6 步滑动动画 | `tk.Canvas` |
 | **SkeletonLoader** | 脉冲灰条骨架屏 | `tk.Canvas` + `after` 循环 |
 | **EmptyState** | 居中空态（图标+标题+副标题） | `tk.Frame` |
-| **ToggleSwitch** | iOS 风格开关，6 步滑动动画 | `tk.Canvas` |
-| **PlaceholderEntry** | 统一输入框，placeholder 文字 | `tk.Entry` |
-
-## 图标系统
-
-- 48 个 24×24 线性图标 PNG（PIL 预渲染），存放在 `client/logo/icons/`
-- 两色变体：`#6B7280`（默认）+ `#2563EB`（激活）
-- 运行时的加载链：IconCache → 尝试 PNG → PIL 实时绘制 → emoji 回退
-- 生成脚本：`tools/generate_icons.py`
+| **IconCache** | 图标缓存，PNG/PIL/emoji 回退 | — |
 
 ## 键盘快捷键
 
-| 平台 | 新建任务 | 保存任务 | 摘要弹窗关闭 | 切换论文（弹窗内） |
-|------|---------|---------|:----------:|:----------------:|
-| macOS | `Cmd+N` | `Cmd+S` | `Cmd+W` / `Esc` | `←` `→` |
-| Windows | `Ctrl+N` | `Ctrl+S` | `Esc` | `←` `→` |
+| 平台 | 新建任务 | 保存任务 |
+|------|---------|---------|
+| macOS | `Cmd+N` | `Cmd+S` |
+| Windows | `Ctrl+N` | `Ctrl+S` |
 
 ## 启动流程
 
 ### macOS
-1. 双击 `HONGXUN-ZZU.app` → 自动运行 `python3 client/gui_app.py`
-2. 或双击 `启动.command` → 终端运行
-3. 启动后依次：激活检查 → 守护进程状态 → 试用期状态 → 推送结果轮询
+1. 双击 `macos/HONGXUN-TY.app` → 自动运行 `python3 client/gui_app.py`
+2. 或双击 `macos/启动.command` → 终端运行
+3. 启动后依次：激活检查 → 守护进程状态 → 试用期状态 → 到期检测 → LLM API 检测 → 推送结果轮询
 
 ### Windows（源码运行）
 1. `cd client && python gui_app.py`
-2. 或双击 `launch.bat`（需自行创建）
 
 ### Windows（打包后运行）
-1. 在 Windows 上运行 `build_exe.bat`
+1. 在 Windows 上运行 `windows/build_exe.py`（或 `build_exe.bat`）
 2. 输出 `dist/HONGXUN/HONGXUN.exe`
-3. 复制 `dist/HONGXUN/` 整文件夹到任意 Windows 电脑
-4. 双击 `HONGXUN.exe` 运行，无需安装 Python
-
-## Windows 跨平台适配
-
-| 改动 | 文件 | 说明 |
-|------|------|------|
-| 高 DPI 感知 | `gui_app.py` | `SetProcessDpiAwareness(2)`，开启 Windows 高 DPI 支持 |
-| ttk 主题 | `gui/theme.py` | 统一使用 `clam` 主题，按钮颜色跨平台一致 |
-| 键盘快捷键 | `gui_app.py` | 同时绑定 `Cmd`（macOS）和 `Ctrl`（Windows） |
-| 进程检测 | `gui_app.py` | Windows 用 `ctypes.OpenProcess` 替代 `os.kill(pid, 0)` |
-| 进程终止 | `gui_app.py` | Windows 用 `TerminateProcess` 替代 `SIGTERM` |
-| 开机自启 | `scheduler_daemon.py` | 注册表 HKCU\…\Run 方式 |
-| 信号处理 | `scheduler_daemon.py` | 入口处用 try/except 包裹 `signal.signal()` |
-| 打包模式路径 | `config_manager.py`, `scheduler_daemon.py` | 数据目录自动设为 exe 同级 `_data/` |
-| tcl/tk 修复 | `build_exe.bat` | 自动检测并修复 tkinter |
+3. 双击运行，无需安装 Python
 
 ## 版本历史
 
-### v1.5.0-ZZU（当前）
+### v2.0.0（当前）
+**架构与功能大版本升级：**
+- **页面导航架构**：侧栏 4 页面导航（概览/监控/书架/设置）+ DashboardView 首页仪表盘
+- **智能期刊选择器**：4295 本期刊库，三级分类树 + 搜索 + 多选 + 收藏 + 详情 + 批量导入
+- **PDF 下载**：多来源回退 + Sci-Hub 增强（风险提示 + 5 秒确认）
+- **AI 大模型翻译**：多家厂商接入（DeepSeek/千问/智谱/豆包/Kimi/MiniMax），配置弹窗 + 测试连接 + 失败中断 + 断点续传
+- **付费订阅系统**：4 档套餐扫码订阅（占位支付接口），与礼品券并存
+- **统一有效期检测**：4 个受限板块 + 3 天宽限期 + 启动自动检测 + 到期时间具体日期显示
+- **冷色 Slate 主题**：主色 Blue-500、圆润控件、卡片悬浮效果
+- **推送时间可配置**：每日推送时间可在设置中调整
 
-**文献书架改进：**
-- **状态图标**：`○` 灰色待读 / `▲` 绿色已读 / `★` 红色排除，形状+颜色双重区分
-- **右栏可滚动**：MetadataCard 全高度展示，摘要填满剩余空间，带滚动条
-- **标题可复制**：右侧栏标题使用 Text 组件，支持选中复制
-- **DOI 可打开浏览器**：点击 DOI 自动打开 `https://doi.org/{doi}` 并复制到剪贴板
-- **自动标记已读**：单击/方向键切换自动标记已读，状态列点击不参与
-- **双击检测**：200ms 定时器判定单击/双击，状态列点击绕过
-- **工具栏精简**：移除无实质功能的 ↻ 重置按钮
+### v1.5.0
+- 状态图标（○/▲/★）+ 自动标记已读 + DOI 打开浏览器
+- 公告推送系统（Gitee notice.json）+ 更新检测优化
 
-**监控区改进：**
-- **任务状态圆点**：选中=绿色 / 未选中=灰色 / 运行中=蓝色
-
-**公告推送系统（新增）：**
-- `fetch_notice()` 从 Gitee 仓库读取 `notice.json`，启动时弹窗通知
-- `mark_notice_read()` 按 `msg_id` 去重，每条公告每个用户只弹一次
-- 管理员只需在 Gitee 上维护 `notice.json` 即可向所有用户推送消息
-
-**更新检测优化：**
-- 启动时同时检查版本更新 + 公告
-- 重构弹窗为通用 `_show_info_dialog()`，更新/公告共用
-
-### v1.3.2-ZZU
-
-### v1.3.1-ZZU
-
-**Bug 修复：**
-- **字体变量 None 传播**：`from gui.theme import FONT_BODY` 在模块加载时捕获 `None`，`init_fonts()` 只改 theme 模块内的值，其他模块的局部变量仍为 `None`。在 `init_fonts()` 末尾通过 `sys.modules` 推送到所有依赖模块修复。
-- **`_add_receiver_widget()` 方法丢失**：清理旧库代码时误删了收件邮箱控件创建方法，导致 `_load_email_config()` 崩溃。从 git 历史恢复。
-- 应用启动无报错，所有功能可用。
-
-### v1.3.0-ZZU
-
-**GUI 架构重构：**
-- 将 4348 行 `gui_app.py` 拆分为 `gui/` 组件包（5 个模块，2072 行）
-- `gui/theme.py`：颜色/字体/图标/smtp 常量统一管理
-- `gui/widgets.py`：自定义 Canvas 控件库（RoundedCard, ModernButton, StatusPill 等）
-- `gui/sidebar.py`：卡片式侧栏（替代 Listbox）
-- `gui/library_view.py`：三栏文献书架（替代 Treeview 单表）
-- `gui_app.py` 缩减至 3000+ 行
-
-**视觉全面升级：**
-- **圆角 + 阴影卡片系统**：Canvas 绘制 RoundedCard（12px 圆角 + 3 层阴影 + hover 抬升动画）
-- **暖色基调**：页面背景 `#F8F9FA`（原纯白）、Tailwind Blue-600 主色 `#2563EB`（原 Apple Blue）
-- **语义色扩充**：从 25 个颜色键增至 45+，含 pill/task_accent/shadow 系列
-- **圆角系统化**：RoundedCard 12px、ModernButton 8px、StatusPill 全圆角
-- **排版层次**：9 个 FONT 常量，标题/正文/辅助文字颜色对比梯度（Gray-900/800/500/400）
-- **侧栏任务卡片**：彩色边条（5 色循环）+ 任务名 + 状态指示，替代单行 Listbox
-- **文献书架三栏布局**：左列表（PaperCard 卡片） + 中详情预览（QuickLookPanel） + 右元数据（MetadataCard）
-- **Quick Look**：空格键展开/收起 inline 摘要预览，Escape 关闭
-- **批量操作**：Ctrl/Shift 多选 + 批量改状态（待读/已读） + 批量导出
-- **48 个线性图标 PNG**：PIL 预渲染，两色变体，emoji 降级回退
-
-**微交互：**
-- Toast 滑入动画（从下方 30px 滑入，150ms）
-- 按钮 hover 颜色过渡（6 步 180ms `lerp_color`）
-- 按钮 press 模拟 scale(0.97) 反馈
-- RoundedCard hover 阴影抬升（2px，6 步 180ms）
-- 骨架屏（SkeletonLoader 脉冲灰条，800ms 循环）
-- 空态引导（EmptyState 居中图标 + 文字）
-
-**文献书架功能：**
-- 三栏布局替代旧 Treeview
-- PaperCard 卡片列表：状态色条 + 标题 + 作者 + 期刊
-- QuickLookPanel：内联摘要预览，前后导航
-- MetadataCard：期刊、DOI（点击复制）、日期、关键词 pill
-- Ctrl/Shift 多选 + 批量操作栏
-- 空格键 Quick Look 展开/收起
-
-### v1.2.0-ZZU
-
-**文献书架功能：**
-- 新增文献书架 Tab，自动收录每次检索结果
-- 书架列表：状态（待读/已读/排除）、标题完整显示、摘要预览 120 字符、作者
-- 隐藏列：期刊、DOI、发表时间、关键词、来源任务（可随时切换显示）
-- 点击状态列循环切换阅读状态（待读→已读→排除）
-- 点击行弹出摘要详情弹窗（前置、可选中复制、Ctrl+W 关闭）
-- 弹窗内支持 ← → 箭头切换上一篇/下一篇论文
-- 弹窗内元数据卡片化展示（期刊/作者/DOI/日期/关键词）
-- 弹窗内可直接切换阅读状态，点击 DOI 可复制
-- 书架状态筛选（全部/待读/已读/排除）+ 来源任务筛选
-- 书架标题搜索（Enter 触发 🔍 按钮）
-- 书架空状态引导提示
-- 书架底部统计栏（总计/已读/待读/排除）
-- 检索结果自动去重入库（按 DOI / title+journal 去重，跨所有历史任务）
-- 导出 RIS 格式，可选择导出范围（全部/待读/已读/当前筛选）→ 供 Zotero 导入
-
-**GUI 视觉重构（v1.2 版 Apple 色系）：**
-- 颜色体系全面升级为 Apple 色系（`#007AFF`、`#34C759`、`#FF3B30`、`#F5F5F7` 等）
-- 顶部工具栏精简重构（高度 48→44px）
-- 左侧面板改为侧栏浅灰底 + 标题分隔线 + 底部推送状态卡片
-- Notebook 标签自定义样式（选中 Apple 蓝底白字 / 未选中浅灰底）
-- 进度条常驻化（不活跃时 2px 灰色细线，活跃时自动展开）
-- 状态栏优化（侧栏灰底、加版号圆点指示器、代码锁移入状态栏）
-- Treeview 行高 32→38，交替行色（白/浅灰）
-
-**Bug 修复：**
-- 代码锁按钮重复创建（状态栏 + links_frame 各一份）
-- `_apply_lib_tags` 递归保护
-- `_progress_idle` pack 时序（延迟到 status_frame 构建后）
-- 激活状态显示混淆（试用期内显示"试用中"而非"已激活"）
-
-**功能新增：**
-- 检索取消功能（进度条旁的「取消」按钮）
-- 多文件锚定试用（5 个配置文件，删除单个可自动恢复）
-
-### v1.1.1-ZZU
-
-**改进：**
-- Windows 平台完整支持（进程管理、开机自启、快捷键）
-- PyInstaller 打包支持（`HONGXUN.spec`、`build_exe.bat`）
-
-### v1.1.0-ZZU（2026-07-21）
-
-**修复：**
-- 核心 Bug：试用期内邮件发送失败（`is_activated()` → `is_feature_allowed()`）
-
-### v1.0.0-ZZU（郑州大学定制版）
-
-**新增功能：**
-- MAC 绑定的 14 天免费试用
-- 邮件发送失败自动保存附件，支持再发送
-- 独立调度守护进程 v2.0
+### v1.3.x
+- GUI 架构重构：拆分 gui/ 组件包 + 圆角卡片系统 + 三栏文献书架
 
 ## 依赖
 
 ```bash
-pip install requests python-docx Pillow
+pip install -r requirements.txt
 ```
+
+requirements.txt：`requests>=2.28.0`、`python-docx>=1.1.0`、`selenium>=4.15.0`、`Pillow>=9.0.0`

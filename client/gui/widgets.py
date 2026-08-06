@@ -11,6 +11,53 @@ import os
 
 
 # ======================================================================
+# 平滑滚轮：把滚轮事件转成细腻的像素滚动
+# ======================================================================
+def smooth_wheel_handler(canvas, scale=0.5):
+    """生成平滑滚轮事件处理函数（带分数累积）。
+
+    解决 `yview_scroll(int(-delta), "units")` 灵敏度太高的问题：
+    一次轻推滚轮（macOS 每次 delta≈1，产生多个连续事件）就滚动多个内容行，
+    直接跳到底部。本实现：
+      - 归一化 delta（macOS ±1~3，Windows ±120 → ±1）
+      - 用 scale 缩小每次滚动量（默认 0.5 行/格）
+      - 分数部分累积，攒满 1 才真正滚动，保证顺滑且不丢滚动
+    返回 (handler, bind_all_fn, unbind_all_fn)。
+    """
+    import sys as _sys
+    _acc = [0.0]  # 分数累积器
+
+    def _on_wheel(event):
+        if event.num == 4:
+            delta = 1
+        elif event.num == 5:
+            delta = -1
+        elif event.delta:
+            delta = event.delta if _sys.platform == "darwin" else event.delta / 120
+        else:
+            return "break"
+        delta = max(-3.0, min(3.0, delta))  # 限制单次幅度
+        _acc[0] += delta * scale
+        steps = int(_acc[0])
+        if steps:
+            _acc[0] -= steps
+            canvas.yview_scroll(-steps, "units")
+        return "break"
+
+    def _bind(e):
+        canvas.bind_all("<MouseWheel>", _on_wheel, add="+")
+        canvas.bind_all("<Button-4>", _on_wheel, add="+")
+        canvas.bind_all("<Button-5>", _on_wheel, add="+")
+
+    def _unbind(e):
+        canvas.unbind_all("<MouseWheel>")
+        canvas.unbind_all("<Button-4>")
+        canvas.unbind_all("<Button-5>")
+
+    return _on_wheel, _bind, _unbind
+
+
+# ======================================================================
 # ModernEntry — 统一现代风格输入框（1px 细边框 + 聚焦主蓝）
 # ======================================================================
 class ModernEntry(tk.Frame):
@@ -302,18 +349,25 @@ class CollapsibleFrame(ttk.Frame):
 # ToggleSwitch — iOS 风格开关（画布绘制 + 滑动动画）
 # ======================================================================
 class ToggleSwitch(tk.Canvas):
-    """iOS 风格开关：点击切换，带滑动动画"""
+    """iOS 风格开关：点击切换，带滑动动画 + 阴影 + 按下放大反馈。
 
-    def __init__(self, master, width=50, height=28, command=None, initial=False,
+    修复：滑块半径按 (height-2*margin)//2 计算，保证滑块不越出轨道。
+    """
+
+    def __init__(self, master, width=51, height=31, command=None, initial=False,
                  bg_color=COLORS["bg_page"]):
         self._command = command
         self._state = initial
         self._animating = False
+        self._pressed = False
         # 注意：不能用 _w/_h（tkinter Misc 保留属性，super().__init__ 会覆盖成 widget path）
         self._sw_width = width
         self._sw_height = height
+        self._thumb_margin = 3
+        # 滑块直径 = 高度 - 2*边距，保证左右都不越界
+        self._thumb_d = height - self._thumb_margin * 2
+        self._thumb_r = self._thumb_d / 2
         self._radius = height / 2
-        self._thumb_margin = 2
 
         track_width = width
         track_height = height
@@ -321,23 +375,40 @@ class ToggleSwitch(tk.Canvas):
         super().__init__(master, width=width, height=height,
                          highlightthickness=0, bd=0, bg=bg_color)
 
-        self._track_color_on = COLORS["primary"]
-        self._track_color_off = "#E5E5EA"
+        self._track_color_on = "#34C759"    # iOS 绿
+        self._track_color_off = "#E9E9EA"   # iOS 浅灰
         self._thumb_color = "#FFFFFF"
+        self._shadow_color = "#000000"
 
+        # 轨道
         self._track = self.create_rounded_rect(
             0, 0, track_width, track_height, self._radius,
             fill=self._track_color_off, outline=""
         )
-        thumb_x = self._thumb_margin if not initial else width - self._radius - self._thumb_margin
-        self._thumb = self.create_oval(
-            thumb_x, self._thumb_margin,
-            thumb_x + self._radius * 2 - self._thumb_margin * 2,
-            height - self._thumb_margin,
-            fill=self._thumb_color, outline=""
+        # 轨道内阴影（凹陷感）
+        self._track_inner = self.create_rounded_rect(
+            1, 1, track_width - 1, track_height - 1, self._radius,
+            fill="", outline="#000000", width=0.5
         )
 
-        self.bind("<Button-1>", self._on_click, add="+")
+        thumb_x = self._thumb_margin if not initial \
+            else width - self._thumb_d - self._thumb_margin
+        # 滑块阴影（先画，位于滑块下方）
+        self._thumb_shadow = self.create_oval(
+            thumb_x + 1, self._thumb_margin + 2,
+            thumb_x + self._thumb_d + 1, height - self._thumb_margin + 2,
+            fill="#000000", outline=""
+        )
+        self.itemconfig(self._thumb_shadow, stipple="gray25")
+        # 滑块（白色圆形，带细描边）
+        self._thumb = self.create_oval(
+            thumb_x, self._thumb_margin,
+            thumb_x + self._thumb_d, height - self._thumb_margin,
+            fill=self._thumb_color, outline="#E5E5E5", width=0.5
+        )
+
+        self.bind("<Button-1>", self._on_press, add="+")
+        self.bind("<ButtonRelease-1>", self._on_release, add="+")
 
     def create_rounded_rect(self, x1, y1, x2, y2, r, **kwargs):
         points = [
@@ -348,20 +419,48 @@ class ToggleSwitch(tk.Canvas):
         ]
         return self.create_polygon(points, smooth=True, **kwargs)
 
-    def _on_click(self, event):
+    def _on_press(self, event):
+        """按下时滑块轻微放大，增加触感。"""
         if self._animating:
             return
+        self._pressed = True
+        self._scale_thumb(1.1)
+
+    def _on_release(self, event):
+        """松开时恢复大小并切换状态。"""
+        if self._animating:
+            return
+        self._pressed = False
+        self._scale_thumb(1.0)
         self._state = not self._state
         self._animate()
         if self._command:
             self._command()
 
+    def _scale_thumb(self, scale):
+        """缩放滑块（按下放大效果）。"""
+        try:
+            coords = self.coords(self._thumb)
+            cx = (coords[0] + coords[2]) / 2
+            cy = self._sw_height / 2
+            r = self._thumb_r * scale
+            self.coords(self._thumb, cx - r, cy - r, cx + r, cy + r)
+            self.coords(self._thumb_shadow, cx - r + 1, cy - r + 2,
+                        cx + r + 1, cy + r + 2)
+        except Exception:
+            pass
+
     def _animate(self):
+        """滑动动画 + 轨道颜色渐变（更多帧，更流畅）。"""
         self._animating = True
         on = self._state
-        target_x = self._sw_width - self._radius - self._thumb_margin if on else self._thumb_margin
-        current_x = self.coords(self._thumb)[0]
-        steps = 6
+        target_x = (self._sw_width - self._thumb_d - self._thumb_margin) if on \
+            else self._thumb_margin
+        try:
+            current_x = self.coords(self._thumb)[0]
+        except Exception:
+            current_x = self._thumb_margin
+        steps = 8
         delta = (target_x - current_x) / steps
 
         def _step(step=0):
@@ -374,13 +473,14 @@ class ToggleSwitch(tk.Canvas):
             cx = current_x + delta * (step + 1)
             cy = self._thumb_margin
             self.coords(self._thumb, cx, cy,
-                        cx + self._radius * 2 - self._thumb_margin * 2,
-                        self._sw_height - self._thumb_margin)
+                        cx + self._thumb_d, self._sw_height - self._thumb_margin)
+            self.coords(self._thumb_shadow, cx + 1, cy + 2,
+                        cx + self._thumb_d + 1, self._sw_height - self._thumb_margin + 2)
             ratio = (step + 1) / steps
-            c = self._lerp_color(self._track_color_off, self._track_color_on, ratio) if on \
-                else self._lerp_color(self._track_color_on, self._track_color_off, ratio)
+            c = lerp_color(self._track_color_off, self._track_color_on, ratio) if on \
+                else lerp_color(self._track_color_on, self._track_color_off, ratio)
             self.itemconfig(self._track, fill=c)
-            self.after(30, lambda s=step + 1: _step(s))
+            self.after(20, lambda s=step + 1: _step(s))
 
         _step()
 
@@ -397,15 +497,17 @@ class ToggleSwitch(tk.Canvas):
 
     def _draw_state(self):
         if self._state:
-            tx = self._sw_width - self._radius - self._thumb_margin
+            tx = self._sw_width - self._thumb_d - self._thumb_margin
             self.itemconfig(self._track, fill=self._track_color_on)
         else:
             tx = self._thumb_margin
             self.itemconfig(self._track, fill=self._track_color_off)
         self.coords(self._thumb,
                     tx, self._thumb_margin,
-                    tx + self._radius * 2 - self._thumb_margin * 2,
-                    self._sw_height - self._thumb_margin)
+                    tx + self._thumb_d, self._sw_height - self._thumb_margin)
+        self.coords(self._thumb_shadow,
+                    tx + 1, self._thumb_margin + 2,
+                    tx + self._thumb_d + 1, self._sw_height - self._thumb_margin + 2)
 
 
 # ======================================================================
@@ -1280,3 +1382,283 @@ class EmptyState(tk.Frame):
             tk.Label(container, text=subtitle, font=FONT_CAPTION,
                      fg=COLORS["text_hint"], bg=COLORS["bg_page"],
                      wraplength=300).pack()
+
+
+# ======================================================================
+# IconButton — 纯图标按钮（圆形/方形，悬停/按下态）
+# ======================================================================
+class IconButton(tk.Canvas):
+    """纯图标按钮：Canvas 绘制圆角底 + 图标，替代 tk.Label + bind。"""
+
+    def __init__(self, master, icon="", command=None, size=32, radius=8,
+                 tooltip=None, bg_color=COLORS["bg_card"], **kwargs):
+        super().__init__(master, width=size, height=size, borderwidth=0,
+                         highlightthickness=0, bg=bg_color, cursor="hand2", **kwargs)
+        self._size = size
+        self._radius = radius
+        self._icon = icon
+        self._command = command
+        self._bg_color = bg_color
+        self._state = "normal"  # normal / hover / press
+        self._icon_ref = None
+        self._tooltip = None
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+        if tooltip:
+            self._tooltip = Tooltip(self, tooltip)
+        self._draw()
+
+    def _draw(self):
+        self.delete("all")
+        s = self._size
+        fill = self._bg_color
+        if self._state == "press":
+            fill = COLORS["hover_bg"]
+        elif self._state == "hover":
+            fill = COLORS["hover_bg"]
+        self.create_polygon(_rounded_rect_pts(1, 1, s - 1, s - 1, self._radius),
+                            smooth=True, fill=fill, outline="")
+        icon = IconCache.get(self._icon, int(s * 0.5), "default",
+                             tint=COLORS["primary"] if self._state != "normal" else COLORS["text_secondary"])
+        if icon:
+            self.create_image(s / 2, s / 2, image=icon)
+            self._icon_ref = icon
+        else:
+            self.create_text(s / 2, s / 2, text=ICONS.get(self._icon, self._icon),
+                             font=FONT_CAPTION,
+                             fill=COLORS["primary"] if self._state != "normal" else COLORS["text_secondary"])
+
+    def _on_enter(self, e):
+        self._state = "hover"
+        self._draw()
+
+    def _on_leave(self, e):
+        self._state = "normal"
+        self._draw()
+
+    def _on_press(self, e):
+        self._state = "press"
+        self._draw()
+
+    def _on_release(self, e):
+        self._state = "hover"
+        self._draw()
+        if self._command:
+            self.after(60, self._command)
+
+
+# ======================================================================
+# LinkButton — 文字链接按钮（蓝色，悬停下划线）
+# ======================================================================
+class LinkButton(tk.Label):
+    """文字链接：蓝色文字，悬停变深蓝 + 下划线。替代手工 Label+bind。"""
+
+    def __init__(self, master, text="", command=None, color=None,
+                 font=None, **kwargs):
+        self._link_command = command
+        super().__init__(master, text=text,
+                         font=font or FONT_CAPTION,
+                         fg=color or COLORS["primary"],
+                         bg=kwargs.pop("bg", COLORS["bg_page"]),
+                         cursor="hand2", **kwargs)
+        self._normal_color = self.cget("fg")
+        self._hover_color = COLORS["primary_active"]
+        # 保存原始字体，悬停只切下划线，不改变字号/字重
+        self._base_font = self.cget("font")
+        self._underline_font = None
+        try:
+            import tkinter.font as _tf
+            f = _tf.Font(font=self._base_font)
+            weight = f.cget("weight")
+            self._base_font = (f.cget("family"), f.cget("size"), weight)
+            self._underline_font = (f.cget("family"), f.cget("size"), "underline")
+        except Exception:
+            pass
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Button-1>", self._on_click)
+
+    def _on_enter(self, e):
+        self.configure(fg=self._hover_color,
+                       font=self._underline_font or self._base_font)
+
+    def _on_leave(self, e):
+        self.configure(fg=self._normal_color, font=self._base_font)
+
+    def _on_click(self, e):
+        if self._link_command:
+            self._link_command()
+
+
+# ======================================================================
+# Tooltip — 悬停气泡提示
+# ======================================================================
+class Tooltip:
+    """悬停提示：鼠标停留后延迟显示气泡，移开自动消失。"""
+
+    def __init__(self, widget, text, delay_ms=600, bg="#1E293B", fg="#FFFFFF"):
+        self._widget = widget
+        self._text = text
+        self._delay = delay_ms
+        self._bg = bg
+        self._fg = fg
+        self._tip = None
+        self._after_id = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress-1>", self._hide, add="+")
+
+    def _schedule(self, e=None):
+        self._cancel()
+        self._after_id = self._widget.after(self._delay, self._show)
+
+    def _show(self):
+        if self._tip is not None and self._tip.winfo_exists():
+            return
+        try:
+            w = self._widget.winfo_toplevel()
+            self._tip = tk.Toplevel(w)
+            self._tip.wm_overrideredirect(True)
+            self._tip.attributes("-topmost", True)
+            label = tk.Label(self._tip, text=self._text, bg=self._bg, fg=self._fg,
+                             font=FONT_CAPTION, padx=8, pady=4,
+                             justify=tk.LEFT)
+            label.pack()
+            self._tip.update_idletasks()
+            x = self._widget.winfo_rootx()
+            y = self._widget.winfo_rooty() + self._widget.winfo_height() + 4
+            self._tip.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
+    def _hide(self, e=None):
+        self._cancel()
+        if self._tip is not None:
+            try:
+                if self._tip.winfo_exists():
+                    self._tip.destroy()
+            except Exception:
+                pass
+            self._tip = None
+
+    def _cancel(self):
+        if self._after_id:
+            try:
+                self._widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+
+# ======================================================================
+# Toast — 轻提示（底部浮动，自动消失）
+# ======================================================================
+class Toast:
+    """轻提示：在指定窗口底部显示一条消息，N 秒后自动淡出消失。
+
+    用法：
+        Toast.show(root, "保存成功", success=True)
+        Toast.show(root, "操作失败，请重试", success=False, duration=5)
+    """
+
+    _current = None
+
+    @classmethod
+    def show(cls, master, message, success=True, duration=2.5, action_text=None,
+             action_cmd=None):
+        # 关闭旧的 toast，避免叠加
+        if cls._current is not None:
+            try:
+                if cls._current.winfo_exists():
+                    cls._current.destroy()
+            except Exception:
+                pass
+        try:
+            win = tk.Toplevel(master)
+            win.wm_overrideredirect(True)
+            win.attributes("-topmost", True)
+            bg = COLORS["success"] if success else COLORS["danger"]
+            fg = "#FFFFFF"
+            frame = tk.Frame(win, bg=bg, padx=18, pady=10)
+            frame.pack()
+            tk.Label(frame, text=message, font=FONT_CAPTION, fg=fg,
+                     bg=bg).pack(side=tk.LEFT)
+            if action_text and action_cmd:
+                btn = tk.Label(frame, text=action_text, font=FONT_CAPTION,
+                               fg="#FFFFFF", bg=bg, cursor="hand2")
+                btn.pack(side=tk.LEFT, padx=(10, 0))
+                btn.bind("<Button-1>", lambda e: (action_cmd(), cls._destroy(win)))
+            win.update_idletasks()
+            # 底部居中
+            sw = master.winfo_screenwidth()
+            x = master.winfo_rootx() + (master.winfo_width() - win.winfo_width()) // 2
+            y = master.winfo_rooty() + master.winfo_height() - win.winfo_height() - 60
+            win.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+            cls._current = win
+            win.after(int(duration * 1000), lambda: cls._destroy(win))
+        except Exception:
+            pass
+
+    @classmethod
+    def _destroy(cls, win):
+        try:
+            if win.winfo_exists():
+                win.destroy()
+        except Exception:
+            pass
+        if cls._current is win:
+            cls._current = None
+
+
+# ======================================================================
+# AppState — 轻量全局状态管理（文档 3.3）
+# ======================================================================
+class AppState:
+    """极简全局状态：set/subscribe/notify，跨页面同步。
+
+    用法：
+        AppState.set("task_count", 5)
+        AppState.subscribe("task_count", lambda v: label.configure(text=str(v)))
+    """
+
+    _values = {}
+    _listeners = {}
+
+    @classmethod
+    def set(cls, key, value):
+        changed = cls._values.get(key) != value
+        cls._values[key] = value
+        if changed:
+            cls._notify(key, value)
+
+    @classmethod
+    def get(cls, key, default=None):
+        return cls._values.get(key, default)
+
+    @classmethod
+    def subscribe(cls, key, callback):
+        cls._listeners.setdefault(key, []).append(callback)
+        if key in cls._values:
+            try:
+                callback(cls._values[key])
+            except Exception:
+                pass
+
+    @classmethod
+    def _notify(cls, key, value):
+        for cb in cls._listeners.get(key, []):
+            try:
+                cb(value)
+            except Exception:
+                pass
+
+
+def _rounded_rect_pts(x1, y1, x2, y2, r):
+    return [
+        x1 + r, y1, x2 - r, y1, x2, y1,
+        x2, y1 + r, x2, y2 - r, x2, y2,
+        x2 - r, y2, x1 + r, y2, x1, y2,
+        x1, y2 - r, x1, y1 + r, x1, y1,
+    ]

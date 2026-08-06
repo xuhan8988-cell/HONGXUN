@@ -37,7 +37,6 @@ from email.mime.multipart import MIMEMultipart
 from email.header import Header
 import re, textwrap, signal
 import logging
-import requests
 
 logger = logging.getLogger("HONGXUN")
 if not logger.handlers:
@@ -68,23 +67,24 @@ from core import (
     UNSENT_DIR,
     validate_journals, validate_keywords, validate_date_range, validate_email_config,
     validate_receivers,
-    run_history_search, run_increment_check, send_combined_email, add_push_record,
-    cancel_current_search, reset_search_cancel, is_search_cancelled,
-    register_search_cancel, unregister_search_cancel, cancel_search,
-    search, abstract,
+    add_push_record,
     coupon_manager,
     code_protector,
     auto_updater,
 )
+# 检索/引擎函数（run_history_search 等）经 core.__getattr__ 惰性导入，
+# 避免启动阶段冷加载 requests/urllib3（约 330ms）。使用时在函数内：
+#   from core import run_history_search
 from core.journal_store import JournalStore
 from gui.widgets import (
     ModernEntry, PlaceholderEntry, CollapsibleFrame, ToggleSwitch,
     RoundedCard, ModernButton, StatusPill, IconLabel,
     IconCache, SkeletonLoader, EmptyState, attach_focus_ring,
-    ModernScrollbar,
+    ModernScrollbar, smooth_wheel_handler,
 )
 from gui.sidebar import TaskSidebar
 from gui.library_view import LibraryView
+from gui.ref_formatter_view import RefFormatterView
 from gui.dashboard import DashboardView
 IconCache.init(ICON_DIR)
 
@@ -130,6 +130,7 @@ class PaperMonitorApp:
         # 先隐藏主窗口，显示启动页
         self.root.withdraw()
         self._icon_refs = []  # 强引用图片对象，防止GC回收
+        self._scaled_icon_cache = {}  # (path, size) → PhotoImage，避免重复 PIL 缩放
         self._scale = 1.0  # 当前缩放系数，用于缩放布局间距
 
         self.current_task_id = None
@@ -193,9 +194,9 @@ class PaperMonitorApp:
         def _build_and_finish():
             try:
                 self._build_ui()
-                self._load_window_icons()
+                # 窗口图标（macOS iconphoto 同步 Dock 交互很慢，约 3.5s），
+                # 延后到启动页关闭后再异步设置，避免阻塞首次渲染。
                 self._refresh_task_list()
-                self._load_email_config()
                 self._refresh_status_bar()
 
                 # 绑定事件
@@ -211,6 +212,13 @@ class PaperMonitorApp:
                 # 延迟关闭启动页，让 UI 有时间渲染
                 self.root.after(800, self._close_splash)
 
+                # 启动页关闭后再设置窗口图标（macOS iconphoto 很慢，延后避免阻塞）
+                self.root.after(900, self._load_window_icons)
+
+                # 邮箱配置加载含许可状态刷新（会触发网络时间校验，约 1-2s），
+                # 延后到启动页关闭后执行，避免阻塞首次渲染。
+                self.root.after(1000, self._load_email_config)
+
                 # 启动后检查未发送附件
                 self.root.after(2000, self._check_unsent_attachments)
 
@@ -218,13 +226,15 @@ class PaperMonitorApp:
                 self.root.after(1200, self._check_resume_on_startup)
                 self.root.after(1500, self._check_scheduler_daemon_status)
                 self.root.after(1800, self._check_trial_status_at_startup)
-                self.root.after(2200, self._check_first_run_wizard)
                 self.root.after(5000, self._check_update_auto)
                 self.root.after(10000, self._poll_daemon_result)
                 # LLM API 可用性检测（异步，不阻塞启动）
                 self.root.after(3500, self._check_llm_api_on_startup)
                 # 订阅/礼品券到期检测（自动关停受限功能）
                 self.root.after(2500, self._check_expiry_on_startup)
+                # 刷新状态栏登录状态；未登录则延迟提示可登录
+                self.root.after(1300, self._refresh_login_status)
+                self.root.after(2000, self._maybe_prompt_login)
             except Exception:
                 # 防止构建 UI 异常导致启动页永远不关闭
                 import traceback
@@ -233,6 +243,13 @@ class PaperMonitorApp:
 
         # 安全兜底：5 秒后无论是否构建完成都关闭启动页
         self.root.after(5000, self._close_splash)
+
+        # 后台预热网络时间缓存：让 _build_and_finish 里的 _load_email_config
+        # 不再同步等待网络（首次 _get_network_time 约 1.5s），加速启动。
+        try:
+            coupon_manager.prewarm_network_time()
+        except Exception:
+            pass
 
         self.root.after_idle(_build_and_finish)
 
@@ -321,23 +338,33 @@ class PaperMonitorApp:
         return None
 
     def _load_scaled_icon(self, path, size):
-        """加载并缩放图标，size 为最长边像素，保持宽高比。失败返回None"""
+        """加载并缩放图标，size 为最长边像素，保持宽高比。失败返回None。
+
+        带 (path, size) 缓存：同一图标同一尺寸只缩放一次，避免订阅弹窗
+        反复打开时重复 PIL 缩放造成卡顿。
+        """
+        if not path or not os.path.exists(path):
+            return None
+        cache_key = (os.path.abspath(path), size)
+        cached = self._scaled_icon_cache.get(cache_key)
+        if cached is not None:
+            return cached
         try:
-            if os.path.exists(path):
-                from PIL import Image, ImageTk
-                img = Image.open(path).convert("RGBA")
-                w, h = img.size
-                if w >= h:
-                    new_w = size
-                    new_h = int(h * size / w)
-                else:
-                    new_h = size
-                    new_w = int(w * size / h)
-                img = img.resize((new_w, new_h), Image.LANCZOS)
-                return ImageTk.PhotoImage(img)
+            from PIL import Image, ImageTk
+            img = Image.open(path).convert("RGBA")
+            w, h = img.size
+            if w >= h:
+                new_w = size
+                new_h = int(h * size / w)
+            else:
+                new_h = size
+                new_w = int(w * size / h)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            result = ImageTk.PhotoImage(img)
+            self._scaled_icon_cache[cache_key] = result
+            return result
         except Exception:
-            pass
-        return None
+            return None
 
     def _load_window_icons(self):
         """加载窗口标题栏和应用图标"""
@@ -443,18 +470,35 @@ class PaperMonitorApp:
         right_tool_group = tk.Frame(toolbar, bg=COLORS["bg_page"])
         right_tool_group.pack(side=tk.RIGHT, padx=(0, 12))
 
+        from gui.widgets import LinkButton
+        # 工具栏文字：加深颜色 + 字号增大 10%（更醒目）
+        _tool_color = COLORS["text_body"]          # 更深的文字色
+        _tool_font = (_ui_font_family(), int(FONT_BODY.cget("size") * 1.1))
         for text, cmd in [
             ("意见反馈", self._open_feedback),
             ("使用说明", self._show_usage_guide),
             ("检查更新", self._check_update_manual),
         ]:
-            btn = tk.Label(right_tool_group, text=text,
-                           font=FONT_BODY, fg=COLORS["text_secondary"],
-                           bg=COLORS["bg_page"], cursor="hand2", padx=8, pady=6)
-            btn.pack(side=tk.RIGHT, padx=(2, 0))
-            btn.bind("<Button-1>", lambda e, c=cmd: c())
-            btn.bind("<Enter>", lambda e, b=btn: b.configure(bg=COLORS["hover_bg"]))
-            btn.bind("<Leave>", lambda e, b=btn: b.configure(bg=COLORS["bg_page"]))
+            LinkButton(right_tool_group, text=text, command=cmd,
+                       color=_tool_color, bg=COLORS["bg_page"], font=_tool_font,
+                       padx=8, pady=6).pack(side=tk.RIGHT, padx=(2, 0))
+
+        # 登录 / 注册 + 邀请码入口（与检查更新同一工具栏分组）
+        self._tool_login_link = LinkButton(right_tool_group, text="登录",
+                                           command=self._open_login_dialog,
+                                           color=_tool_color, bg=COLORS["bg_page"],
+                                           font=_tool_font, padx=8, pady=6)
+        self._tool_login_link.pack(side=tk.RIGHT, padx=(2, 0))
+        self._tool_register_link = LinkButton(right_tool_group, text="注册",
+                                              command=self._open_register_dialog,
+                                              color=_tool_color, bg=COLORS["bg_page"],
+                                              font=_tool_font, padx=8, pady=6)
+        self._tool_register_link.pack(side=tk.RIGHT, padx=(2, 0))
+        self._tool_invite_link = LinkButton(right_tool_group, text="我的邀请码",
+                                            command=self._show_invite_code,
+                                            color=_tool_color, bg=COLORS["bg_page"],
+                                            font=_tool_font, padx=8, pady=6)
+        self._tool_invite_link.pack(side=tk.RIGHT, padx=(2, 0))
 
         # ========== 主内容区 ==========
         self.content_frame = ttk.Frame(self.root, style="TFrame")
@@ -524,24 +568,9 @@ class PaperMonitorApp:
             self._task_canvas.itemconfig(self._task_canvas_window, width=max(event.width, 400))
         self._task_canvas.bind("<Configure>", _configure_task_canvas_width)
 
-        # 鼠标滚轮（平台自适应：macOS delta 为 1~2，Windows 为 120）
-        def _on_mousewheel(event):
-            if event.num == 4:
-                self._task_canvas.yview_scroll(-1, "units")
-            elif event.num == 5:
-                self._task_canvas.yview_scroll(1, "units")
-            elif event.delta:
-                delta = event.delta if sys.platform == "darwin" else event.delta / 120
-                self._task_canvas.yview_scroll(int(-delta), "units")
-            return "break"
-        def _bind_mousewheel(event):
-            self._task_canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
-            self._task_canvas.bind_all("<Button-4>", _on_mousewheel, add="+")
-            self._task_canvas.bind_all("<Button-5>", _on_mousewheel, add="+")
-        def _unbind_mousewheel(event):
-            self._task_canvas.unbind_all("<MouseWheel>")
-            self._task_canvas.unbind_all("<Button-4>")
-            self._task_canvas.unbind_all("<Button-5>")
+        # 鼠标滚轮（平滑滚轮，避免轻推直接跳到底部）
+        _on_mousewheel, _bind_mousewheel, _unbind_mousewheel = smooth_wheel_handler(
+            self._task_canvas)
         scrollable.bind("<Enter>", _bind_mousewheel)
         scrollable.bind("<Leave>", _unbind_mousewheel)
 
@@ -569,23 +598,7 @@ class PaperMonitorApp:
             settings_canvas.itemconfig(self._settings_canvas_window, width=max(event.width, 400))
         settings_canvas.bind("<Configure>", _configure_settings_canvas_width)
 
-        def _s_mousewheel(event):
-            if event.num == 4:
-                settings_canvas.yview_scroll(-1, "units")
-            elif event.num == 5:
-                settings_canvas.yview_scroll(1, "units")
-            elif event.delta:
-                delta = event.delta if sys.platform == "darwin" else event.delta / 120
-                settings_canvas.yview_scroll(int(-delta), "units")
-            return "break"
-        def _s_bind(event):
-            settings_canvas.bind_all("<MouseWheel>", _s_mousewheel, add="+")
-            settings_canvas.bind_all("<Button-4>", _s_mousewheel, add="+")
-            settings_canvas.bind_all("<Button-5>", _s_mousewheel, add="+")
-        def _s_unbind(event):
-            settings_canvas.unbind_all("<MouseWheel>")
-            settings_canvas.unbind_all("<Button-4>")
-            settings_canvas.unbind_all("<Button-5>")
+        _s_mousewheel, _s_bind, _s_unbind = smooth_wheel_handler(settings_canvas)
         settings_scrollable.bind("<Enter>", _s_bind)
         settings_scrollable.bind("<Leave>", _s_unbind)
 
@@ -741,6 +754,24 @@ class PaperMonitorApp:
                                                  variant="primary",
                                                  command=self._redeem_coupon_dialog)
         self._settings_coupon_btn.pack(anchor=tk.W, pady=(4, 0))
+        ModernButton(lf, text="📧 邮箱注册 · 每日推送默认邮箱",
+                     variant="secondary",
+                     command=self._open_login_dialog).pack(anchor=tk.W, pady=(6, 0))
+        self._settings_reg_label = tk.Label(lf, text="", font=FONT_CAPTION,
+                                            fg=COLORS["text_hint"], bg=COLORS["bg_card"],
+                                            anchor=tk.W)
+        self._settings_reg_label.pack(fill=tk.X, pady=(2, 0))
+        # 显示已注册邮箱
+        try:
+            from core import user_manager
+            reg_email = user_manager.get_registered_email()
+            if reg_email:
+                self._settings_reg_label.configure(
+                    text=f"已注册邮箱：{reg_email}", fg=COLORS["success"])
+            else:
+                self._settings_reg_label.configure(text="未注册邮箱", fg=COLORS["text_hint"])
+        except Exception:
+            pass
 
         # ── 卡片 2: 每日推送状态（归入"设置"页） ──
         push_card = _simple_card(self._settings_scrollable)
@@ -1028,17 +1059,9 @@ class PaperMonitorApp:
         # ========== CNKI 知网数据获取模块 ==========
         # 已移除
 
-        # ========== 页面 2: 文献书架 (LibraryView) ==========
-        self.library_view = LibraryView(
-            right_frame,
-            on_download_pdf=self._download_paper_pdf,
-        )
-        self._pages["library"] = self.library_view
-
-        # 兼容旧代码：保留 _refresh_library 别名
-        def _refresh_library():
-            self.library_view.refresh()
-        self._refresh_library = _refresh_library
+        # ========== 页面 2/4: 文献书架 & 格式助手（懒加载） ==========
+        # 不在此同步创建，改为首次导航到时经 _ensure_page 惰性构建，
+        # 避免启动阶段冷加载 LibraryView 的重依赖（加速启动）。
 
         # 显示默认页面（概览）
         self._current_page = "dashboard"
@@ -1105,7 +1128,7 @@ class PaperMonitorApp:
         self.status_var = tk.StringVar(value="")
         tk.Label(inner_sf, textvariable=self.status_var,
                  font=FONT_CAPTION, fg=COLORS["text_secondary"],
-                 bg=COLORS["sidebar_bg"]
+                 bg=COLORS["sidebar_bg"], anchor=tk.W
                  ).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=8)
 
         # 版本号弱化显示（报告建议：不占状态栏主要位置）
@@ -1155,9 +1178,34 @@ class PaperMonitorApp:
             if hasattr(self, 'sidebar'):
                 self.sidebar.set_current_page("monitor")
 
+    def _ensure_page(self, page):
+        """确保页面已构建（懒加载：首次访问才创建 library / ref_formatter）。"""
+        if page in self._pages:
+            return
+        if not hasattr(self, "_page_frame"):
+            return
+        right_frame = self._page_frame
+        if page == "library":
+            self.library_view = LibraryView(
+                right_frame,
+                on_download_pdf=self._download_paper_pdf,
+            )
+            self._pages["library"] = self.library_view
+            self._refresh_library = lambda: self.library_view.refresh()
+        elif page == "ref_formatter":
+            self._ref_formatter_view = RefFormatterView(
+                right_frame,
+                on_open_llm_config=self._open_llm_config_dialog,
+                on_require_activation=self._require_activation,
+            )
+            self._pages["ref_formatter"] = self._ref_formatter_view
+
     def _show_page(self, page):
-        """页面栈切换：显示指定页面，隐藏其他"""
+        """页面栈切换：显示指定页面，隐藏其他（首次访问自动构建懒加载页）。"""
         if not hasattr(self, '_pages'):
+            return
+        self._ensure_page(page)
+        if page not in self._pages:
             return
         for name, widget in self._pages.items():
             if name == page:
@@ -1167,16 +1215,16 @@ class PaperMonitorApp:
         self._current_page = page
 
     def _on_sidebar_nav(self, page):
-        """侧栏导航点击：切换到对应内容页"""
+        """侧栏导航点击：切换到对应内容页（首次访问自动构建懒加载页）"""
         if not hasattr(self, '_pages'):
-            return
-        if page not in self._pages:
             return
         self._show_page(page)
         if page == "dashboard" and hasattr(self, 'dashboard_view'):
             self.dashboard_view.refresh()
         elif page == "library" and hasattr(self, 'library_view'):
             self.library_view.refresh()
+        elif page == "ref_formatter" and hasattr(self, '_ref_formatter_view'):
+            self._ref_formatter_view.refresh()
 
     def _new_task(self):
         self.current_task_id = None
@@ -1349,6 +1397,9 @@ class PaperMonitorApp:
 
     # ===================== 保存与校验 =====================
     def _save_task(self):
+        # 游客模式不能保存任务
+        if not self._require_login("保存任务"):
+            return
         name = self.task_name_var.get().strip()
         if not name:
             messagebox.showerror("错误", "任务名称不能为空")
@@ -1442,9 +1493,18 @@ class PaperMonitorApp:
             self.dashboard_view.refresh()
         elif page == "library" and hasattr(self, 'library_view'):
             self.library_view.refresh()
+        elif page == "ref_formatter" and hasattr(self, '_ref_formatter_view'):
+            self._ref_formatter_view.refresh()
 
     # ===================== 检索执行（一键检索） =====================
     def _run_history(self):
+        from core import (
+            run_history_search, register_search_cancel, unregister_search_cancel,
+            cancel_search,
+        )
+        # 游客模式不能执行检索（只能查看界面）
+        if not self._require_login("执行检索"):
+            return
         if not self.current_task_id:
             messagebox.showwarning("提示", "请先保存任务后再执行检索")
             return
@@ -1675,6 +1735,8 @@ class PaperMonitorApp:
 
     def _export_library(self):
         """从概览页导出书架（导出全部论文为 RIS）"""
+        if not self._require_login("导出书架"):
+            return
         try:
             from core.library import load_library, export_ris
             from tkinter import filedialog
@@ -2009,6 +2071,8 @@ class PaperMonitorApp:
 
     def _download_paper_pdf(self, paper: dict, reopen: bool = False):
         """下载论文 PDF（多来源回退），或打开已下载的 PDF。"""
+        if not self._require_login("下载 PDF"):
+            return
         from core.pdf_config import load_pdf_config
         from core import pdf_fetcher
         from core.library import update_paper_pdf
@@ -2178,6 +2242,7 @@ class PaperMonitorApp:
 
     def _cancel_current_search(self):
         """取消当前正在执行的检索任务"""
+        from core import cancel_search
         if not self._history_running:
             return
         ret = messagebox.askyesno("确认取消", "确定要取消当前检索吗？\n已完成的进度不会保存。")
@@ -2359,42 +2424,58 @@ class PaperMonitorApp:
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
 
-            for _ in range(30):
-                if self._is_daemon_alive():
-                    break
-                time.sleep(0.2)
-            else:
-                messagebox.showerror("启动失败", "调度守护进程启动超时，请重试")
-                return
+            # 守护进程等待（最多 6s）移到后台线程，避免卡住 UI
+            def _wait_daemon():
+                alive = False
+                for _ in range(30):
+                    if self._is_daemon_alive():
+                        alive = True
+                        break
+                    time.sleep(0.2)
+                if alive:
+                    self._scheduler_daemon_running = True
+                    self.after(0, self._on_daemon_started)
+                else:
+                    self.after(0, lambda: messagebox.showerror(
+                        "启动失败", "调度守护进程启动超时，请重试"))
+                    self.after(0, self._reset_push_button)
 
-            self._scheduler_daemon_running = True
-            self._update_daily_push_btn(True)
-            self._status_indicator.configure(
-                text=f"{ICONS['dot_on']} 推送运行中", fg=COLORS["success"])
+            import threading
+            threading.Thread(target=_wait_daemon, daemon=True).start()
 
-            if not self._history_running and not self._increment_running:
-                self.status_var.set("每日推送已启动 | 守护进程将持续运行 | 每日 8:00 自动推送")
-
-            self._refresh_status_bar()
-
-            # 简化弹窗：只提示启动成功
-            messagebox.showinfo("每日推送", "每日推送启动成功")
-
-            # 注册 launchd 开机自启（仅 macOS）
+            # 注册 launchd / Windows 开机自启
             if sys.platform == "darwin":
-                install_launchd()
-            # 注册 Windows 开机自启
+                try:
+                    install_launchd()
+                except Exception:
+                    pass
             elif sys.platform == "win32":
-                install_windows_startup()
-
-            # 启动后立即执行一周检索并发送邮件（在后台进行）
-            self._do_weekly_startup_mail()
+                try:
+                    install_windows_startup()
+                except Exception:
+                    pass
 
         except Exception as e:
-            messagebox.showerror("启动失败", f"调度守护进程启动失败：\n{e}")
+            messagebox.showerror("启动失败", str(e))
+            self._reset_push_button()
+
+        # 启动后立即执行一周检索并发送邮件（在后台进行）
+        self._do_weekly_startup_mail()
+
+    def _on_daemon_started(self):
+        """守护进程启动成功后更新 UI。"""
+        self._update_daily_push_btn(True)
+        self._status_indicator.configure(
+            text=f"{ICONS['dot_on']} 推送运行中", fg=COLORS["success"])
+        if not self._history_running and not self._increment_running:
+            self.status_var.set("每日推送已启动 | 守护进程将持续运行 | 每日 8:00 自动推送")
+        self._refresh_status_bar()
+        self._push_toggle_btn.set_enabled(True)
+        messagebox.showinfo("每日推送", "每日推送启动成功")
 
     def _do_weekly_startup_mail(self):
         """启动每日推送后，对所有已启用任务进行近一周检索并合并发送邮件"""
+        from core import run_increment_check, send_combined_email
         tasks = load_all_tasks()
         enabled_tasks = {tid: t for tid, t in tasks.items() if t.get("enabled", True)}
         if not enabled_tasks:
@@ -2596,25 +2677,33 @@ class PaperMonitorApp:
             messagebox.showerror("保存失败", f"推送时间保存失败：{e}")
 
     def _toggle_scheduler(self):
-        """切换每日推送开/关（启动或停止外部守护进程）"""
+        """切换每日推送开/关（启动/停止外部守护进程，带即时反馈）"""
         if not self._scheduler_daemon_running:
             # 当前是暂停状态 → 启动
+            # ✅ 立即给反馈：按钮禁用 + 「启动中...」
+            self._push_toggle_btn.set_enabled(False)
+            self._push_toggle_btn.set_text("启动中...", variant="primary")
+            self.status_var.set("正在启动每日推送守护进程...")
+            self._refresh_status_bar()
+
             # 确保有选中任务：如果没有则自动选第一个可用任务
             if not self.current_task_id:
                 tasks = load_all_tasks()
                 if not tasks:
                     messagebox.showwarning("提示", "请先创建并保存任务后再启动每日推送")
+                    self._reset_push_button()
                     return
-                # 自动选第一个已启用的任务
                 first_id = next(iter(tasks))
                 self.current_task_id = first_id
                 self._load_task_to_form(first_id)
-                # 刷新列表选中状态
                 if hasattr(self, 'sidebar'):
                     self.sidebar.select_task(first_id)
 
             if not self._require_activation("每日推送"):
+                self._reset_push_button()
                 return
+
+            # 启动（校验/确认在主线程，守护进程等待在 _start_daily_push 内线程化）
             self._start_daily_push()
         else:
             # 当前是运行状态 → 关闭
@@ -2626,6 +2715,9 @@ class PaperMonitorApp:
             if not ret:
                 return
 
+            self._push_toggle_btn.set_enabled(False)
+            self._push_toggle_btn.set_text("关闭中...", variant="danger")
+
             self._stop_daemon_scheduler()
 
             self._update_daily_push_btn(False)
@@ -2633,6 +2725,17 @@ class PaperMonitorApp:
                 text=f"{ICONS['dot_off']} 已暂停", fg=COLORS["warning"])
             self.status_var.set("每日推送已关闭")
             self._refresh_status_bar()
+            self._push_toggle_btn.set_enabled(True)
+
+    def _reset_push_button(self):
+        """重置推送按钮状态（启动失败/校验不通过时）。"""
+        try:
+            self._push_toggle_btn.set_enabled(True)
+            self._push_toggle_btn.set_text("启动每日推送", variant="primary")
+            self.status_var.set("每日推送未启动")
+            self._refresh_status_bar()
+        except Exception:
+            pass
 
     def _update_daily_push_btn(self, running: bool):
         """更新侧栏和右侧推送状态"""
@@ -2736,223 +2839,376 @@ class PaperMonitorApp:
         return False
 
     def _open_subscription_dialog(self):
-        """订阅付费弹窗：4 档横向套餐卡片（彩色渐变+悬浮）+ 二维码 + 轮询支付。"""
+        """订阅付费弹窗（专业版 UI）：左品牌价值区 + 右套餐定价区，扫码支付轮询激活。"""
         from core import subscription
+
+        W, H = 680, 480
+        LEFT_W = int(W * 0.4)          # 272
+        RIGHT_W = W - LEFT_W           # 408
 
         win = tk.Toplevel(self.root)
         win.title("开通订阅")
+        win.overrideredirect(True)
         win.transient(self.root)
-        win.resizable(False, False)
         win.configure(bg=COLORS["bg_page"])
         win.attributes("-topmost", True)
+        win.resizable(False, False)
 
-        # ── 顶部横幅（渐变 + 醒目文案）──
-        banner = tk.Canvas(win, height=92, highlightthickness=0, bd=0)
-        banner.pack(fill=tk.X)
+        # 居中于主窗口
         try:
-            banner.create_rectangle(0, 0, 900, 92, fill=COLORS["primary"],
-                                    outline="")
-            # 渐变效果（多色带模拟）
-            for i in range(60):
-                ratio = i / 60.0
-                color = lerp_color("#3B82F6", "#8B5CF6", ratio)
-                banner.create_rectangle(0, 0, 900, 92,
-                                        fill=color, outline="")
-            banner.create_rectangle(0, 0, 900, 92, fill="", outline="")
+            win.update_idletasks()
+            x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - W) // 2)
+            y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - H) // 2)
+            win.geometry(f"{W}x{H}+{x}+{y}")
         except Exception:
-            banner.create_rectangle(0, 0, 900, 92, fill="#3B82F6", outline="")
-        banner.create_text(450, 30, text="💳 开通订阅 · 畅享全部功能",
-                           font=(_ui_font_family(), 22, "bold"),
-                           fill="#FFFFFF", anchor=tk.CENTER)
-        banner.create_text(450, 62, text="每日推送 · 邮箱设置 · AI 翻译 · Sci-Hub 增强",
-                           font=(_ui_font_family(), 12),
-                           fill="#E0E7FF", anchor=tk.CENTER)
+            win.geometry(f"{W}x{H}")
 
-        # ── 套餐卡片区（4 张横向一排）──
-        plans_frame = tk.Frame(win, bg=COLORS["bg_page"])
-        plans_frame.pack(padx=28, pady=(20, 6))
+        # ── 细边框 + 白底主体 ──
+        outer = tk.Frame(win, bg=COLORS["border"])
+        outer.pack(fill=tk.BOTH, expand=True)
+        card = tk.Frame(outer, bg="#FFFFFF")
+        card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+
+        body = tk.Frame(card, bg="#FFFFFF")
+        body.pack(fill=tk.BOTH, expand=True)
+
+        # 关闭按钮（右上角）
+        close_btn = tk.Label(card, text="✕", font=(_ui_font_family(), 14, "bold"),
+                             fg=COLORS["text_hint"], bg="#FFFFFF", cursor="hand2")
+        close_btn.place(x=W - 34, y=10)
+
+        def _close(_e=None):
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+        close_btn.bind("<Button-1>", _close)
+        close_btn.bind("<Enter>", lambda e: close_btn.config(fg=COLORS["text_title"]))
+        close_btn.bind("<Leave>", lambda e: close_btn.config(fg=COLORS["text_hint"]))
+        win.bind("<Escape>", _close)
+
+        # ════════════ 左侧：品牌价值区（40%） ════════════
+        left = tk.Canvas(body, width=LEFT_W, highlightthickness=0, bd=0, bg="#EFF6FF")
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        # 浅蓝渐变（EFF6FF → DBEAFE，从上到下）
+        # 优化：4px 一条色带代替逐像素（480→120 个元素），视觉几乎无差别，渲染更快
+        for yy in range(0, H, 4):
+            col = lerp_color("#EFF6FF", "#DBEAFE", yy / float(H))
+            left.create_rectangle(0, yy, LEFT_W, min(yy + 4, H), fill=col, outline="")
+
+        # Logo（放大居中）
+        logo_img = None
+        try:
+            logo_img = self._load_scaled_icon(ICON_APP, 80)
+        except Exception:
+            logo_img = None
+        if logo_img:
+            left.create_image(LEFT_W / 2, 96, image=logo_img)
+            self._icon_refs.append(logo_img)
+        else:
+            left.create_text(LEFT_W / 2, 96, text=ICONS["logo"],
+                             font=(_ui_font_family(), 44, "bold"), fill="#3B82F6")
+        # 图标下方装饰线
+        left.create_line(LEFT_W / 2 - 24, 140, LEFT_W / 2 + 24, 140, fill="#93C5FD", width=1.5)
+        # 主标题 / 副标题
+        left.create_text(LEFT_W / 2, 178, text="解锁鸿讯专业版",
+                         font=(_ui_font_family(), 22, "bold"), fill="#1E293B")
+        left.create_text(LEFT_W / 2, 210, text="让科研管理更高效",
+                         font=(_ui_font_family(), 14), fill="#64748B")
+
+        # 价值点列表
+        features = [
+            "每日邮件推送服务",
+            "无限监控任务数量",
+            "实验中心全模块开放",
+            "后续新功能优先体验",
+        ]
+        fy = 252
+        for feat in features:
+            left.create_text(40, fy, text="✓", font=(_ui_font_family(), 16, "bold"),
+                             fill="#10B981", anchor=tk.CENTER)
+            left.create_text(64, fy, text=feat, font=(_ui_font_family(), 14),
+                             fill="#334155", anchor=tk.W)
+            fy += 48  # 行距 40 → 48（+20%）
+
+        # 底部信任背书
+        left.create_text(LEFT_W / 2, H - 56, text="⭐⭐⭐⭐⭐ 4.9 分用户评价",
+                         font=(_ui_font_family(), 12), fill="#94A3B8")
+        left.create_text(LEFT_W / 2, H - 30, text="已有 1,200+ 科研工作者选择",
+                         font=(_ui_font_family(), 13), fill="#94A3B8")
+
+        # ════════════ 右侧：套餐定价区（60%） ════════════
+        right = tk.Frame(body, bg="#FFFFFF", width=RIGHT_W)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        right.pack_propagate(False)
+
         self._sub_plan_var = tk.StringVar(value=subscription.DEFAULT_PLAN)
-        self._sub_plan_cards = {}
 
-        # 每档卡片主题色（丰富配色吸引眼球）
-        plan_colors = {
-            "3M":   {"top": "#F59E0B", "bottom": "#F97316"},   # 橙金
-            "6M":   {"top": "#10B981", "bottom": "#059669"},   # 翡翠绿
-            "12M":  {"top": "#3B82F6", "bottom": "#2563EB"},   # 蓝（默认选中）
-            "24M":  {"top": "#8B5CF6", "bottom": "#7C3AED"},   # 紫
-        }
+        def _rounded_rect(c, x1, y1, x2, y2, r, **kw):
+            pts = [x1 + r, y1, x2 - r, y1, x2, y1,
+                   x2, y1 + r, x2, y2 - r, x2, y2,
+                   x2 - r, y2, x1 + r, y2, x1, y2,
+                   x1, y2 - r, x1, y1 + r, x1, y1]
+            return c.create_polygon(pts, smooth=True, **kw)
 
-        plan_keys = list(subscription.PLANS.keys())
-        for idx, key in enumerate(plan_keys):
+        # ── 套餐选择行（4 档横向胶囊）──
+        pill_row = tk.Frame(right, bg="#FFFFFF")
+        self._sub_pill_row = pill_row
+        self._sub_pills = {}
+
+        def _select_plan(key):
+            self._sub_plan_var.set(key)
+            for k, b in self._sub_pills.items():
+                b.set_text(subscription.PLANS[k]["label"],
+                           variant="primary" if k == key else "secondary")
+            _redraw_price_card(key)
+            # resize=False：保持按钮宽度一致，避免不同价格位数导致按钮长短变化
+            self._sub_cta.set_text(f"立即解锁 · ¥{subscription.PLANS[key]['price']}",
+                                   resize=False)
+
+        for key in subscription.PLANS:
             p = subscription.PLANS[key]
-            pc = plan_colors.get(key, {"top": "#3B82F6", "bottom": "#2563EB"})
+            is_def = (key == subscription.DEFAULT_PLAN)
+            btn = ModernButton(pill_row, text=p["label"], height=30,
+                               variant="primary" if is_def else "secondary",
+                               command=lambda k=key: _select_plan(k))
+            btn.pack(side=tk.LEFT, padx=4)
+            self._sub_pills[key] = btn
 
-            card = tk.Canvas(plans_frame, width=172, height=178,
-                             highlightthickness=0, bd=0,
-                             bg=COLORS["bg_page"], cursor="hand2")
-            card.grid(row=0, column=idx, padx=7)
-            card._plan_key = key
+        # ── 价格卡片（蓝边高亮）──
+        # 蓝色边框范围缩小 15%（S=0.85），内部内容坐标与字号同步按相同比例缩放
+        _PC_S = 0.85
+        self._sub_price_card = tk.Canvas(right,
+                                         width=round(400 * _PC_S), height=round(170 * _PC_S),
+                                         highlightthickness=0, bd=0, bg="#FFFFFF")
+        self._sub_price_card.pack(pady=(26, 6))
 
-            # 给卡片 Canvas 添加圆角矩形绘制方法
-            def _create_rounded_rect_poly(c, x1, y1, x2, y2, r, **kwargs):
-                pts = [
-                    x1 + r, y1, x2 - r, y1, x2, y1,
-                    x2, y1 + r, x2, y2 - r, x2, y2,
-                    x2 - r, y2, x1 + r, y2, x1, y2,
-                    x1, y2 - r, x1, y1 + r, x1, y1,
-                ]
-                return c.create_polygon(pts, smooth=True, **kwargs)
-            card.create_rounded_rect_poly = lambda *a, **k: _create_rounded_rect_poly(card, *a, **k)
+        def _redraw_price_card(key):
+            p = subscription.PLANS[key]
+            c = self._sub_price_card
+            c.delete("all")
+            w, h = round(400 * _PC_S), round(170 * _PC_S)  # 340 x 145
+            # 蓝色柔光阴影
+            c.create_polygon(4, 6, w - 4, 6, w - 4, h + 6, 4, h + 6,
+                             fill="#DBEAFE", outline="")
+            # 白卡 + 1.5px 蓝色边框（范围同步缩小）
+            _rounded_rect(c, 1, 1, w - 1, h - 1, round(12 * _PC_S), fill="#FFFFFF",
+                          outline="#3B82F6", width=2)
 
-            # 绘制卡片（渐变底色 + 内容）
-            def _draw_card(c=card, key=key, p=p, pc=pc, selected=False, hovered=False):
-                c.delete("all")
-                w, h = 172, 178
-                # 悬浮/选中：上浮 + 阴影
-                lift = 6 if (selected or hovered) else 0
-                # 底部阴影
-                if selected or hovered:
-                    c.create_rounded_rect_poly(6, h - 10, w - 6, h + 8, 14,
-                                               fill="#CBD5E1", outline="")
-                # 渐变主体（逐行渐变，垂直）
-                top, bottom = pc["top"], pc["bottom"]
-                for yy in range(h - lift):
-                    ratio = yy / float(h)
-                    col = lerp_color(top, bottom, ratio)
-                    c.create_rectangle(2, lift + yy, w - 2, lift + yy + 1,
-                                       fill=col, outline="")
-                # 选中：外发光边框
-                border_w = 3 if selected else 1
-                border_col = "#FFFFFF" if selected else "#FFFFFF"
-                c.create_rounded_rect_poly(1, lift + 1, w - 1, lift + h - 1, 14,
-                                           fill="", outline=border_col, width=border_w)
+            # ── 折扣徽章（右上角，同步缩放）──
+            badge_w, badge_h = round(104 * _PC_S), round(36 * _PC_S)   # 88 x 31
+            badge_x = w - badge_w - round(10 * _PC_S)
+            badge_y = round(10 * _PC_S)
+            _rounded_rect(c, badge_x, badge_y, badge_x + badge_w, badge_y + badge_h,
+                          round(18 * _PC_S), fill="#EF4444", outline="")
+            c.create_text(badge_x + badge_w / 2, badge_y + badge_h / 2,
+                          text=f"🔥 {p['discount']}",
+                          fill="#FFFFFF", font=(_ui_font_family(), round(14 * _PC_S), "bold"))
+            # 稀缺性提示（徽章旁小字）
+            c.create_text(w - round(10 * _PC_S), badge_y + badge_h + round(12 * _PC_S),
+                          text="限时特惠，即将恢复原价",
+                          font=(_ui_font_family(), round(10 * _PC_S)), fill="#F59E0B", anchor=tk.E)
 
-                # 有效期（大标题）
-                c.create_text(w / 2, lift + 24, text=p["label"],
-                              font=(_ui_font_family(), 16, "bold"),
-                              fill="#FFFFFF", anchor=tk.CENTER)
-                # 折扣（最大，红色，有质感）
-                c.create_text(w / 2, lift + 52, text=p["discount"],
-                              font=(_ui_font_family(), 22, "bold"),
-                              fill="#FECACA", anchor=tk.CENTER)
-                # 原价（灰色 + 删除线）
-                c.create_text(w / 2, lift + 78, text=f"¥{p['origin_price']}",
-                              font=(_ui_font_family(), 14),
-                              fill="#E2E8F0", anchor=tk.CENTER)
-                # 删除线（在原价文字中间）
-                c.create_line(w / 2 - 34, lift + 82, w / 2 + 34, lift + 82,
-                              fill="#FCA5A5", width=2)
-                # 现价（黑色 + 大字）
-                c.create_text(w / 2, lift + 108, text=f"¥{p['price']}",
-                              font=(_ui_font_family(), 24, "bold"),
-                              fill="#FFFFFF", anchor=tk.CENTER)
-                # 每天折合（小字黑色）
-                c.create_text(w / 2, lift + 138, text=f"每天折合 ¥{p['daily']}",
-                              font=(_ui_font_family(), 11),
-                              fill="#F1F5F9", anchor=tk.CENTER)
-                # 推荐角标（12M 默认）
-                if key == subscription.DEFAULT_PLAN and not selected:
-                    c.create_text(w - 16, lift + 12, text="推荐",
-                                  font=(_ui_font_family(), 9, "bold"),
-                                  fill="#FEF3C7", anchor=tk.CENTER)
+            # ── 原价（删除线，同步缩放）──
+            # 永久档不显示原价删除线（无期限概念）
+            if not p.get("permanent"):
+                orig = f"原价 ¥{p['origin_price']}"
+                orig_y = round(42 * _PC_S)
+                orig_font = (_ui_font_family(), round(16 * _PC_S))
+                orig_id = c.create_text(round(28 * _PC_S), orig_y, text=orig, font=orig_font,
+                                        fill="#94A3B8", anchor=tk.W)
+                # 删除线：精确计算文字宽度，线在文字垂直中间
+                try:
+                    orig_bbox = c.bbox(orig_id)
+                    orig_w = orig_bbox[2] - orig_bbox[0]
+                    orig_x_start = orig_bbox[0]
+                    line_y = orig_y  # 文字基线附近，正好穿过中间
+                except Exception:
+                    orig_w = round(10 * _PC_S) * len(orig)
+                    orig_x_start = round(28 * _PC_S)
+                    line_y = orig_y
+                # 删除线（从文字左边到右边，垂直居中）
+                c.create_line(orig_x_start - 2, line_y, orig_x_start + orig_w + 2, line_y,
+                              fill="#94A3B8", width=1.5)
 
-            # 选中/悬浮状态
-            card._selected = (key == subscription.DEFAULT_PLAN)
-            card._hovered = False
+            # ── 现价（超大字号，视觉中心，同步缩放）──
+            price_num = str(p['price'])
+            price_y = round(96 * _PC_S)
+            # ¥ 符号（小一号）
+            yuan_font = (_ui_font_family(), round(28 * _PC_S), "bold")
+            yuan_id = c.create_text(round(28 * _PC_S), price_y, text="¥", font=yuan_font,
+                                    fill="#1D4ED8", anchor=tk.W)
+            try:
+                yuan_w = c.bbox(yuan_id)[2] - round(28 * _PC_S)
+            except Exception:
+                yuan_w = round(22 * _PC_S)
+            # 价格数字（超大）
+            num_font = (_ui_font_family(), round(52 * _PC_S), "bold")
+            num_id = c.create_text(round(28 * _PC_S) + yuan_w + round(4 * _PC_S), price_y,
+                                   text=price_num, font=num_font,
+                                   fill="#1D4ED8", anchor=tk.W)
+            try:
+                num_w = c.bbox(num_id)[2] - (round(28 * _PC_S) + yuan_w + round(4 * _PC_S))
+            except Exception:
+                num_w = round(32 * _PC_S) * len(price_num)
+            # 「/月|年|永久」后缀
+            suffix = f"/{p['label']}"
+            suffix_font = (_ui_font_family(), round(18 * _PC_S))
+            c.create_text(round(28 * _PC_S) + yuan_w + round(4 * _PC_S) + num_w + round(10 * _PC_S),
+                          price_y, text=suffix,
+                          font=suffix_font, fill="#64748B", anchor=tk.W)
 
-            def _redraw(c=card):
-                _draw_card(c, c._plan_key, subscription.PLANS[c._plan_key],
-                           plan_colors.get(c._plan_key, {"top": "#3B82F6", "bottom": "#2563EB"}),
-                           selected=c._selected, hovered=c._hovered)
+            # ── 单位说明 ──
+            if p.get("permanent"):
+                unit_text = "一次付费 · 永久使用 · 含后续所有更新"
+            elif p.get("daily") is not None:
+                unit_text = f"一次付费 · 每天折合 ¥{p['daily']} 元 · 到期自动停止"
+            else:
+                unit_text = "一次付费 · 到期自动停止"
+            c.create_text(round(28 * _PC_S), round(140 * _PC_S),
+                          text=unit_text,
+                          font=(_ui_font_family(), round(12 * _PC_S)), fill="#64748B", anchor=tk.W)
 
-            def _select(c=card):
-                # 清除其他卡片选中态
-                for k, cc in self._sub_plan_cards.items():
-                    cc._selected = False
-                c._selected = True
-                for k, cc in self._sub_plan_cards.items():
-                    cc._redraw()
-                self._sub_plan_var.set(c._plan_key)
-                self._sub_selected_label.configure(
-                    text=f"已选：{subscription.PLANS[c._plan_key]['label']} · "
-                         f"¥{subscription.PLANS[c._plan_key]['price']}")
+        _redraw_price_card(subscription.DEFAULT_PLAN)
 
-            def _on_hover(e, c=card):
-                c._hovered = True
-                c._redraw()
+        # 套餐选择移到价格卡片下方（价格优先，提升转化率）
+        pill_row.pack(pady=(2, 0))
 
-            def _on_leave(e, c=card):
-                c._hovered = False
-                c._redraw()
+        # 最推荐标签（默认套餐胶囊上加引导，字号调大 100%）
+        self._sub_reco_tag = tk.Label(right, text="★ 最推荐", font=(_ui_font_family(), 20, "bold"),
+                                      fg=COLORS["primary"], bg="#FFFFFF")
+        self._sub_reco_tag.pack(pady=(4, 0))
 
-            def _on_click(e, c=card):
-                _select(c)
+        # ── 主行动按钮（CTA，加宽）──
+        self._sub_cta = ModernButton(
+            right,
+            text=f"立即解锁 · ¥{subscription.PLANS[subscription.DEFAULT_PLAN]['price']}",
+            variant="primary", height=50, width=400,
+            command=lambda: self._start_sub_payment(win))
+        self._sub_cta.pack(pady=(10, 0))
 
-            card._redraw = _redraw
-            card._redraw()
-            card.bind("<Enter>", _on_hover)
-            card.bind("<Leave>", _on_leave)
-            card.bind("<Button-1>", _on_click)
-            self._sub_plan_cards[key] = card
+        # ── 次级选项：继续试用 ──
+        def _on_trial(e=None):
+            _close()
+            try:
+                in_trial, remain = coupon_manager.is_trial_period()
+            except Exception:
+                in_trial, remain = False, 0
+            if in_trial:
+                messagebox.showinfo("免费试用",
+                                    f"您当前处于 {remain} 天免费试用期，可继续使用全部功能。")
+            else:
+                messagebox.showinfo("免费试用",
+                                    "7 天免费试用已结束，开通订阅即可继续使用全部功能。")
 
-        # 需在卡片创建后才有此引用，用于显示选中套餐（独立 frame，避免与 grid 冲突）
-        sel_row = tk.Frame(win, bg=COLORS["bg_page"])
-        sel_row.pack(pady=(4, 0))
-        self._sub_selected_label = tk.Label(sel_row, text="", font=FONT_LABEL,
-                                            fg=COLORS["text_body"], bg=COLORS["bg_page"])
+        self._sub_trial_link = tk.Label(right, text="继续使用 7 天免费试用",
+                                        font=(_ui_font_family(), 13),
+                                        fg=COLORS["text_secondary"], bg="#FFFFFF", cursor="hand2")
+        self._sub_trial_link.pack(pady=(10, 0))
+        self._sub_trial_link.bind("<Button-1>", _on_trial)
+        self._sub_trial_link.bind("<Enter>",
+                                  lambda e: self._sub_trial_link.config(fg="#2563EB"))
+        self._sub_trial_link.bind("<Leave>",
+                                  lambda e: self._sub_trial_link.config(fg=COLORS["text_secondary"]))
 
-        # 二维码区（默认隐藏，点「立即支付」后显示）
-        self._sub_qr_frame = tk.Frame(win, bg=COLORS["bg_page"])
+        # 注册邮箱入口（邮箱注册制，注册后作为每日推送默认邮箱）
+        self._sub_reg_link = tk.Label(right, text="📧 注册邮箱 · 每日推送默认邮箱",
+                                      font=(_ui_font_family(), 12),
+                                      fg=COLORS["primary"], bg="#FFFFFF", cursor="hand2")
+        self._sub_reg_link.pack(pady=(4, 0))
+        self._sub_reg_link.bind("<Button-1>",
+                                lambda e: self._open_login_dialog())
+        self._sub_reg_link.bind("<Enter>",
+                                lambda e: self._sub_reg_link.config(fg="#2563EB"))
+        self._sub_reg_link.bind("<Leave>",
+                                lambda e: self._sub_reg_link.config(fg=COLORS["primary"]))
 
-        # 二维码容器（白色圆角边框）
+        # ── 底部保障信息 ──
+        footer = tk.Frame(right, bg="#FFFFFF")
+        footer.pack(side=tk.BOTTOM, pady=(0, 14))
+        for t in ["🔒 安全支付", "·", "✓ 终身更新", "·", "⭐ 4.9 用户评价"]:
+            tk.Label(footer, text=t, font=(_ui_font_family(), 11),
+                     fg=COLORS["text_hint"], bg="#FFFFFF").pack(side=tk.LEFT, padx=4)
+
+        # ── 二维码区（点「立即解锁」后显示）──
+        self._sub_qr_frame = tk.Frame(right, bg="#FFFFFF")
         self._sub_qr_canvas = tk.Canvas(self._sub_qr_frame, width=200, height=200,
-                                        highlightthickness=0, bd=0, bg="#FFFFFF")
-
-        # 二维码下方的套餐/金额说明
-        self._sub_qr_plan_label = tk.Label(self._sub_qr_frame, text="", font=FONT_BODY_BOLD,
-                                           fg=COLORS["text_title"], bg=COLORS["bg_page"])
-
+                                        highlightthickness=1, bd=0,
+                                        highlightbackground=COLORS["border"], bg="#FFFFFF")
+        self._sub_qr_plan_label = tk.Label(self._sub_qr_frame, text="",
+                                           font=FONT_BODY_BOLD,
+                                           fg=COLORS["text_title"], bg="#FFFFFF")
         self._sub_status_label = tk.Label(self._sub_qr_frame, text="",
-                                          font=FONT_CAPTION, fg=COLORS["text_secondary"],
-                                          bg=COLORS["bg_page"])
+                                          font=FONT_CAPTION,
+                                          fg=COLORS["text_secondary"], bg="#FFFFFF")
+        self._sub_back_link = ModernButton(self._sub_qr_frame, text="← 返回修改套餐",
+                                           variant="secondary", height=30,
+                                           pad_x=14, command=self._show_sub_back)
 
-        btn_row = tk.Frame(win, bg=COLORS["bg_page"])
-        btn_row.pack(pady=(12, 20))
-        ModernButton(btn_row, text="立即支付", variant="primary", height=40,
-                     command=lambda: self._start_sub_payment(win)).pack(side=tk.LEFT, padx=6)
-        ModernButton(btn_row, text="关闭", variant="secondary", height=40,
-                     command=win.destroy).pack(side=tk.LEFT, padx=6)
+        # ── 支付成功区 ──
+        self._sub_success_frame = tk.Frame(right, bg="#FFFFFF")
+        self._sub_success_canvas = tk.Canvas(self._sub_success_frame, width=96, height=96,
+                                             highlightthickness=0, bd=0, bg="#FFFFFF")
+        self._sub_success_title = tk.Label(self._sub_success_frame, text="支付成功！",
+                                           font=(_ui_font_family(), 20, "bold"),
+                                           fg=COLORS["success"], bg="#FFFFFF")
+        self._sub_success_sub = tk.Label(self._sub_success_frame,
+                                         text="订阅已自动激活，全部功能已解锁",
+                                         font=FONT_CAPTION,
+                                         fg=COLORS["text_secondary"], bg="#FFFFFF")
 
-        # 初始选中默认套餐（二维码不显示，待点击支付后出现）
-        self._sub_plan_cards[subscription.DEFAULT_PLAN]._selected = True
-        for k, c in self._sub_plan_cards.items():
-            c._redraw()
-        self._sub_selected_label.configure(
-            text=f"已选：{subscription.PLANS[subscription.DEFAULT_PLAN]['label']} · "
-                 f"¥{subscription.PLANS[subscription.DEFAULT_PLAN]['price']}")
-        self._sub_selected_label.pack(anchor=tk.CENTER, pady=(2, 0))
-
+        # 收尾：置顶 + 模态
         try:
             win.update_idletasks()
-            # 宽度增加 30%（原 728 → 946），高度增加 10%（原 640 → 704）
-            win.geometry("946x704")
-            win.update_idletasks()
-        except Exception:
-            pass
-        try:
             win.lift()
         except Exception:
             pass
         win.grab_set()
 
     def _show_sub_qr(self):
-        """点「立即支付」后显示二维码区并生成占位二维码。"""
+        """点「立即解锁」后隐藏定价区，显示二维码与支付状态。"""
         from core import subscription
-        self._sub_qr_frame.pack(pady=(4, 4))
+        for w in (self._sub_pill_row, self._sub_price_card, self._sub_reco_tag,
+                  self._sub_cta, self._sub_trial_link):
+            try:
+                w.pack_forget()
+            except Exception:
+                pass
+        self._sub_qr_frame.pack(pady=(26, 4))
         self._sub_qr_canvas.pack()
         self._sub_qr_plan_label.pack(pady=(8, 0))
         self._sub_status_label.pack(pady=(4, 0))
+        self._sub_back_link.pack(pady=(6, 0))
         self._render_mock_qr()
+
+    def _show_sub_back(self):
+        """从二维码区返回套餐选择。"""
+        self._sub_qr_frame.pack_forget()
+        self._sub_success_frame.pack_forget()
+        self._sub_price_card.pack(pady=(26, 6))
+        self._sub_pill_row.pack(pady=(2, 0))
+        self._sub_reco_tag.pack(pady=(4, 0))
+        self._sub_cta.pack(pady=(10, 0))
+        self._sub_trial_link.pack(pady=(10, 0))
+
+    def _show_sub_success(self):
+        """支付成功后原地切换为成功状态（绿色对勾）。"""
+        self._sub_qr_frame.pack_forget()
+        self._sub_success_frame.pack(pady=(34, 4))
+        self._sub_success_canvas.pack()
+        self._sub_success_title.pack(pady=(8, 0))
+        self._sub_success_sub.pack(pady=(4, 0))
+        c = self._sub_success_canvas
+        c.create_oval(6, 6, 90, 90, outline="#10B981", width=6)
+        c.create_line(28, 50, 42, 66, fill="#10B981", width=7,
+                      capstyle=tk.ROUND, joinstyle=tk.ROUND)
+        c.create_line(42, 66, 70, 32, fill="#10B981", width=7,
+                      capstyle=tk.ROUND, joinstyle=tk.ROUND)
 
     def _render_mock_qr(self):
         """绘制占位二维码图案（虚假二维码），下方标注套餐与金额。"""
@@ -2964,9 +3220,9 @@ class PaperMonitorApp:
             qr_text = order["qr_content"]
             self._sub_qr_canvas.delete("all")
             w, h = 200, 200
-            # 白色底
+            # 白底
             self._sub_qr_canvas.create_rectangle(0, 0, w, h, fill="#FFFFFF", outline="")
-            # 生成伪随机点阵（模拟二维码）
+            # 伪随机点阵（模拟二维码）
             import hashlib
             seed = int(hashlib.md5(qr_text.encode()).hexdigest()[:8], 16)
             import random
@@ -2979,12 +3235,14 @@ class PaperMonitorApp:
                                                              fill="#1E293B", outline="")
             # 三个定位角
             for ox, oy in [(8, 8), (w - 48, 8), (8, h - 48)]:
-                self._sub_qr_canvas.create_rectangle(ox, oy, ox + 40, oy + 40, fill="#1E293B", outline="")
-                self._sub_qr_canvas.create_rectangle(ox + 8, oy + 8, ox + 32, oy + 32, fill="#FFFFFF", outline="")
-                self._sub_qr_canvas.create_rectangle(ox + 16, oy + 16, ox + 24, oy + 24, fill="#1E293B", outline="")
-            # 二维码下方标注
+                self._sub_qr_canvas.create_rectangle(ox, oy, ox + 40, oy + 40,
+                                                     fill="#1E293B", outline="")
+                self._sub_qr_canvas.create_rectangle(ox + 8, oy + 8, ox + 32, oy + 32,
+                                                     fill="#FFFFFF", outline="")
+                self._sub_qr_canvas.create_rectangle(ox + 16, oy + 16, ox + 24, oy + 24,
+                                                     fill="#1E293B", outline="")
             self._sub_qr_plan_label.configure(
-                text=f"{p['label']} · ¥{p['price']} · 到期自动续费前可用 {p['days']} 天")
+                text=f"{p['label']} · ¥{p['price']} · 开通后可用 {p['days']} 天")
         except Exception:
             self._sub_qr_canvas.create_text(100, 100, text="（二维码占位）",
                                             fill="#64748B")
@@ -2998,7 +3256,7 @@ class PaperMonitorApp:
         # 点击支付后显示二维码
         self._show_sub_qr()
 
-        # 重新生成订单（覆盖占位二维码）
+        # 生成订单
         self._sub_status_label.configure(text=f"订单生成中 · {p['label']} ¥{p['price']} ...")
         try:
             order = subscription.create_order(plan)
@@ -3007,7 +3265,17 @@ class PaperMonitorApp:
             return
         order_id = order["order_id"]
         self._sub_status_label.configure(
-            text=f"请使用微信/支付宝扫码支付 ¥{p['price']}（演示：约 5 秒自动完成）")
+            text=f"请使用微信/支付宝扫码支付 ¥{p['price']}，支付完成后将自动解锁")
+
+        def _close_safe():
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+            try:
+                win.destroy()
+            except Exception:
+                pass
 
         def _poll():
             if not win.winfo_exists():
@@ -3018,8 +3286,6 @@ class PaperMonitorApp:
                 status = "pending"
             if status == "paid":
                 ok = subscription.activate_subscription(plan)
-                self._sub_status_label.configure(
-                    text="✓ 支付成功，订阅已开通！" if ok else "激活失败，请重试")
                 if ok:
                     from core.config_manager import load_app_config, save_app_config
                     cfg = load_app_config()
@@ -3032,7 +3298,14 @@ class PaperMonitorApp:
                         pass
                     self._invalidate_activation_cache()
                     self._update_license_status()
-                    win.after(1500, win.destroy)
+                    try:
+                        self._show_sub_success()
+                    except Exception:
+                        pass
+                    win.after(1500, _close_safe)
+                else:
+                    self._sub_status_label.configure(text="激活失败，请重试")
+                    win.after(2000, _poll)
                 return
             elif status == "failed":
                 self._sub_status_label.configure(text="支付失败，请重试")
@@ -3040,6 +3313,283 @@ class PaperMonitorApp:
             win.after(2000, _poll)
 
         _poll()
+    # ===================== 登录 / 注册 =====================
+
+    def _open_login_dialog(self, parent=None):
+        """登录弹窗：邮箱 + 密码验证登录。"""
+        from core import user_manager
+        parent = parent or self.root
+
+        win = tk.Toplevel(parent)
+        win.title("登录")
+        win.geometry("440x320")
+        win.minsize(420, 300)
+        win.transient(parent)
+        win.configure(bg=COLORS["bg_page"])
+        try:
+            win.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        tk.Label(win, text="🔐 登录鸿讯 HONGXUN", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_page"]).pack(
+            anchor=tk.W, padx=20, pady=(18, 4))
+        tk.Label(win, text="使用注册邮箱和密码登录",
+                 font=FONT_CAPTION, fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_page"]).pack(anchor=tk.W, padx=20, pady=(0, 12))
+
+        form = tk.Frame(win, bg=COLORS["bg_page"])
+        form.pack(fill=tk.X, padx=20)
+
+        tk.Label(form, text="邮箱：", font=FONT_BODY,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).pack(anchor=tk.W)
+        email_entry = tk.Entry(form, font=FONT_BODY, relief="flat",
+                               highlightthickness=1,
+                               highlightbackground=COLORS["border"],
+                               bg=COLORS["bg_input"], fg=COLORS["text_body"])
+        email_entry.pack(fill=tk.X, ipady=5, pady=(2, 4))
+
+        tk.Label(form, text="密码：", font=FONT_BODY,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).pack(anchor=tk.W)
+        pwd_entry = tk.Entry(form, font=FONT_BODY, relief="flat", show="•",
+                             highlightthickness=1,
+                             highlightbackground=COLORS["border"],
+                             bg=COLORS["bg_input"], fg=COLORS["text_body"])
+        pwd_entry.pack(fill=tk.X, ipady=5, pady=(2, 4))
+
+        self._login_status = tk.Label(form, text="", font=FONT_CAPTION,
+                                      fg=COLORS["text_secondary"], bg=COLORS["bg_page"])
+        self._login_status.pack(anchor=tk.W, pady=(6, 0))
+
+        btn_row = tk.Frame(win, bg=COLORS["bg_page"])
+        btn_row.pack(pady=(12, 16))
+        ModernButton(btn_row, text="登录", variant="primary", height=38,
+                     command=lambda: _do_login()).pack(side=tk.LEFT, padx=6)
+        ModernButton(btn_row, text="注册账号", variant="secondary", height=38,
+                     command=lambda: (win.destroy(), self._open_register_dialog(parent))
+                     ).pack(side=tk.LEFT, padx=6)
+        ModernButton(btn_row, text="关闭", variant="secondary", height=38,
+                     command=win.destroy).pack(side=tk.LEFT, padx=6)
+
+        def _do_login():
+            email = email_entry.get().strip()
+            pwd = pwd_entry.get().strip()
+            if not email or not pwd:
+                self._login_status.configure(text="请输入邮箱和密码", fg=COLORS["warning"])
+                return
+            try:
+                ok, msg = user_manager.login(email, pwd)
+            except Exception as e:
+                ok, msg = False, f"登录失败：{e}"
+            self._login_status.configure(text=msg,
+                                         fg=COLORS["success"] if ok else COLORS["danger"])
+            if ok:
+                self._refresh_login_status()
+                win.after(1200, win.destroy)
+
+    def _open_register_dialog(self, parent=None):
+        """注册弹窗：注册邮箱 + 验证码 + 密码设置 + 邀请码（选填）。"""
+        from core import user_manager
+        parent = parent or self.root
+
+        win = tk.Toplevel(parent)
+        win.title("注册")
+        win.geometry("460x440")
+        win.minsize(440, 420)
+        win.transient(parent)
+        win.configure(bg=COLORS["bg_page"])
+        try:
+            win.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        tk.Label(win, text="📧 注册鸿讯 HONGXUN", font=FONT_HEADING,
+                 fg=COLORS["text_title"], bg=COLORS["bg_page"]).pack(
+            anchor=tk.W, padx=20, pady=(18, 4))
+        tk.Label(win, text="注册后即可使用免费版功能（检索 / 书架 / 格式助手）",
+                 font=FONT_CAPTION, fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_page"]).pack(anchor=tk.W, padx=20, pady=(0, 12))
+
+        form = tk.Frame(win, bg=COLORS["bg_page"])
+        form.pack(fill=tk.X, padx=20)
+
+        tk.Label(form, text="注册邮箱：", font=FONT_BODY,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).pack(anchor=tk.W)
+        email_entry = tk.Entry(form, font=FONT_BODY, relief="flat",
+                               highlightthickness=1,
+                               highlightbackground=COLORS["border"],
+                               bg=COLORS["bg_input"], fg=COLORS["text_body"])
+        email_entry.pack(fill=tk.X, ipady=5, pady=(2, 4))
+
+        tk.Label(form, text="验证码：", font=FONT_BODY,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).pack(anchor=tk.W)
+        code_row = tk.Frame(form, bg=COLORS["bg_page"])
+        code_row.pack(fill=tk.X, pady=(2, 4))
+        code_entry = tk.Entry(code_row, font=FONT_BODY, relief="flat",
+                              highlightthickness=1,
+                              highlightbackground=COLORS["border"],
+                              bg=COLORS["bg_input"], fg=COLORS["text_body"], width=12)
+        code_entry.pack(side=tk.LEFT, ipady=5)
+        ModernButton(code_row, text="发送验证码", variant="secondary", height=32,
+                     command=lambda: _send_code()).pack(side=tk.LEFT, padx=(8, 0))
+
+        tk.Label(form, text="设置密码：", font=FONT_BODY,
+                 fg=COLORS["text_body"], bg=COLORS["bg_page"]).pack(anchor=tk.W)
+        pwd_entry = tk.Entry(form, font=FONT_BODY, relief="flat", show="•",
+                             highlightthickness=1,
+                             highlightbackground=COLORS["border"],
+                             bg=COLORS["bg_input"], fg=COLORS["text_body"])
+        pwd_entry.pack(fill=tk.X, ipady=5, pady=(2, 4))
+        tk.Label(form, text="密码至少 6 位，需包含数字和英文字母",
+                 font=FONT_CAPTION, fg=COLORS["text_hint"],
+                 bg=COLORS["bg_page"]).pack(anchor=tk.W, pady=(0, 4))
+
+        tk.Label(form, text="邀请码（选填）：", font=FONT_CAPTION,
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_page"]).pack(anchor=tk.W)
+        invite_entry = tk.Entry(form, font=FONT_CAPTION, relief="flat",
+                                highlightthickness=1,
+                                highlightbackground=COLORS["border"],
+                                bg=COLORS["bg_input"], fg=COLORS["text_body"])
+        invite_entry.pack(fill=tk.X, ipady=4, pady=(2, 4))
+
+        self._reg_status = tk.Label(form, text="", font=FONT_CAPTION,
+                                    fg=COLORS["text_secondary"], bg=COLORS["bg_page"])
+        self._reg_status.pack(anchor=tk.W, pady=(6, 0))
+
+        btn_row = tk.Frame(win, bg=COLORS["bg_page"])
+        btn_row.pack(pady=(12, 16))
+        ModernButton(btn_row, text="注册", variant="primary", height=38,
+                     command=lambda: _do_register()).pack(side=tk.LEFT, padx=6)
+        ModernButton(btn_row, text="关闭", variant="secondary", height=38,
+                     command=win.destroy).pack(side=tk.LEFT, padx=6)
+
+        def _send_code():
+            email = email_entry.get().strip()
+            if not email:
+                self._reg_status.configure(text="请输入注册邮箱", fg=COLORS["warning"])
+                return
+            try:
+                ok, msg = user_manager.request_verification_code(email)
+            except Exception as e:
+                ok, msg = False, f"发送失败：{e}"
+            self._reg_status.configure(text=msg,
+                                       fg=COLORS["success"] if ok else COLORS["danger"])
+
+        def _do_register():
+            email = email_entry.get().strip()
+            pwd = pwd_entry.get().strip()
+            code = code_entry.get().strip()
+            invite = invite_entry.get().strip() or None
+            try:
+                ok, msg = user_manager.register(email, pwd, code, invite)
+            except Exception as e:
+                ok, msg = False, f"注册失败：{e}"
+            self._reg_status.configure(text=msg,
+                                       fg=COLORS["success"] if ok else COLORS["danger"])
+            if ok:
+                self._refresh_login_status()
+                win.after(1200, win.destroy)
+
+    def _show_invite_code(self, parent=None):
+        """展示我的邀请码（首次生成，后续直接展示）。"""
+        from core import user_manager
+        email = user_manager.get_logged_in_email()
+        if not email:
+            messagebox.showinfo("提示", "请先登录后查看邀请码")
+            self._open_login_dialog(parent)
+            return
+        try:
+            ok, code = user_manager.generate_invite_code(email)
+        except Exception:
+            ok, code = False, ""
+        if not ok:
+            messagebox.showinfo("邀请码", f"生成失败：{code}")
+            return
+        messagebox.showinfo(
+            "我的邀请码",
+            f"您的专属邀请码：\n\n  {code}  \n\n"
+            f"好友注册时填写该邀请码，您将获得 1 个月全功能奖励。")
+
+    def _maybe_prompt_login(self):
+        """启动后若未登录，温和提示可登录使用免费版（可跳过）。"""
+        try:
+            from core import user_manager
+            if user_manager.is_logged_in():
+                return
+            if messagebox.askyesno(
+                    "欢迎使用鸿讯 HONGXUN",
+                    "注册登录后即可使用免费版功能（检索 / 书架 / 格式助手 GB/T）。\n\n"
+                    "现在登录/注册？"):
+                self._open_login_dialog()
+        except Exception:
+            pass
+
+    def _require_login(self, action_name: str) -> bool:
+        """游客模式只能查看功能，不能执行。执行操作前检查登录。返回是否已登录。"""
+        try:
+            from core import user_manager
+            if user_manager.is_logged_in():
+                return True
+        except Exception:
+            return False
+        # 未登录 → 提示登录
+        if messagebox.askyesno(
+                "需要登录",
+                f"「{action_name}」需要登录后才能使用。\n\n"
+                f"游客模式仅可浏览功能界面。\n\n现在登录/注册？"):
+            self._open_login_dialog()
+        return False
+
+    def _refresh_login_status(self):
+        """刷新顶部工具栏登录状态显示。"""
+        try:
+            from core import user_manager
+            email = user_manager.get_logged_in_email()
+            if hasattr(self, "_tool_login_link"):
+                if email:
+                    self._tool_login_link.configure(text=f"👤 {email}", fg=COLORS["success"])
+                    self._tool_login_link._link_command = self._show_invite_code
+                    # 已登录后「注册」改为「退出」
+                    if hasattr(self, "_tool_register_link"):
+                        self._tool_register_link.configure(text="退出",
+                                                           fg=COLORS["text_secondary"])
+                        self._tool_register_link._link_command = self._logout
+                else:
+                    self._tool_login_link.configure(text="登录",
+                                                    fg=COLORS["text_secondary"])
+                    self._tool_login_link._link_command = self._open_login_dialog
+                    if hasattr(self, "_tool_register_link"):
+                        self._tool_register_link.configure(text="注册",
+                                                           fg=COLORS["text_secondary"])
+                        self._tool_register_link._link_command = self._open_register_dialog
+        except Exception:
+            pass
+
+    def _logout(self):
+        """退出登录。"""
+        try:
+            from core import user_manager
+            if messagebox.askyesno("退出登录", "确定要退出登录吗？"):
+                user_manager.logout()
+                self._refresh_login_status()
+                messagebox.showinfo("已退出", "已退出登录，游客模式仅可浏览功能")
+        except Exception:
+            pass
+
+    def _update_settings_register_label(self):
+        """更新设置页的邮箱注册状态显示。"""
+        try:
+            from core import user_manager
+            email = user_manager.get_registered_email()
+            if hasattr(self, "_settings_reg_label"):
+                if email:
+                    self._settings_reg_label.configure(
+                        text=f"已注册邮箱：{email}", fg=COLORS["success"])
+                else:
+                    self._settings_reg_label.configure(
+                        text="未注册邮箱", fg=COLORS["text_hint"])
+        except Exception:
+            pass
 
     # ===================== 意见反馈 =====================
 
@@ -4348,19 +4898,8 @@ A: 点击顶部工具栏的「意见反馈」按钮，
             return
 
         if is_first_run and is_trial:
-            # 首次运行，弹出试用欢迎
+            # 首次运行：不弹窗，仅在状态栏提示（已取消弹窗，避免打扰）
             self.status_var.set(f"欢迎使用！您有 {remaining_days} 天免费试用期")
-            try:
-                messagebox.showinfo(
-                    "欢迎使用鸿讯 HONGXUN",
-                    f"欢迎使用鸿讯论文监控工具！\n\n"
-                    f"您有 {remaining_days} 天的免费试用期，可体验全部功能（AI翻译、邮件推送）。\n\n"
-                    f"试用已绑定本机设备，删除配置文件不会延长试用期。\n\n"
-                    f"试用到期后需使用礼品券激活才能继续使用。\n\n"
-                    f"祝您使用愉快！"
-                )
-            except Exception:
-                pass
 
     def _check_expiry_on_startup(self):
         """启动时检测订阅/礼品券/试用是否到期，到期自动关停受限功能。
@@ -4423,73 +4962,8 @@ A: 点击顶部工具栏的「意见反馈」按钮，
             traceback.print_exc()
 
     def _check_first_run_wizard(self):
-        """首次运行向导：引导用户创建第一个任务"""
-        tasks_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  "data", "tasks.json")
-        if os.path.exists(tasks_path):
-            try:
-                import json
-                with open(tasks_path, 'r') as f:
-                    tasks = json.load(f)
-                if tasks:
-                    return
-            except Exception:
-                pass
-
-        # 没有任务 — 弹出向导
-        welcome = tk.Toplevel(self.root)
-        welcome.title("首次使用向导")
-        welcome.geometry("480x360")
-        welcome.minsize(420, 320)
-        welcome.transient(self.root)
-        welcome.configure(bg=COLORS["bg_page"])
-        try:
-            welcome.attributes("-topmost", True)
-        except Exception:
-            pass
-
-        tk.Label(welcome, text="欢迎使用鸿讯 HONGXUN",
-                 font=FONT_TITLE, fg=COLORS["text_title"],
-                 bg=COLORS["bg_page"]).pack(pady=(20, 6))
-        tk.Label(welcome, text="只需 3 步即可开始监控论文",
-                 font=FONT_BODY, fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_page"]).pack(pady=(0, 16))
-
-        steps_frame = tk.Frame(welcome, bg=COLORS["bg_page"])
-        steps_frame.pack(padx=30, fill=tk.X)
-
-        steps = [
-            ("1", "创建任务", "填写期刊名称和关键词，设置检索时间范围"),
-            ("2", "执行检索", "一键检索 CrossRef 数据库，论文自动入库"),
-            ("3", "浏览书架", "在三栏文献书架中阅读摘要、管理文献"),
-        ]
-        for num, title, desc in steps:
-            row = tk.Frame(steps_frame, bg=COLORS["bg_page"])
-            row.pack(fill=tk.X, pady=6)
-            num_label = tk.Label(row, text=num,
-                                 font=FONT_HEADING,
-                                 fg=COLORS["primary"], bg=COLORS["bg_page"],
-                                 width=2)
-            num_label.pack(side=tk.LEFT)
-            text_frame = tk.Frame(row, bg=COLORS["bg_page"])
-            text_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-            tk.Label(text_frame, text=title, font=FONT_BODY_BOLD,
-                     fg=COLORS["text_title"], bg=COLORS["bg_page"],
-                     anchor=tk.W).pack(fill=tk.X)
-            tk.Label(text_frame, text=desc, font=FONT_CAPTION,
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_page"],
-                     anchor=tk.W).pack(fill=tk.X)
-
-        btn_frame = tk.Frame(welcome, bg=COLORS["bg_page"])
-        btn_frame.pack(pady=(16, 0))
-        ModernButton(btn_frame, text="开始使用", variant="primary",
-                     command=welcome.destroy).pack()
-
-        welcome.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 480) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 360) // 2
-        welcome.geometry(f"+{x}+{y}")
-        welcome.grab_set()
+        """首次运行向导：已取消（不再弹出）。"""
+        pass
 
     # ===================== 自动更新 & 公告 =====================
 

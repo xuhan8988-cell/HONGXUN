@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox
 import sys
 from gui.theme import COLORS, ICONS, RADIUS_SM, FONT_BODY, FONT_BODY_BOLD, FONT_CAPTION, FONT_HEADING
-from gui.widgets import IconCache, ModernScrollbar
+from gui.widgets import IconCache, ModernScrollbar, smooth_wheel_handler, IconButton
 
 
 def _rounded_rect_points(x1, y1, x2, y2, r):
@@ -77,7 +77,11 @@ class NavItem(tk.Canvas):
             bar = self._ACCENT_W
             self.create_rectangle(0, (h - 18) / 2, bar, (h + 18) / 2,
                                   fill=COLORS["primary"], outline="")
-        icon = IconCache.get(self._page, 18, "default",
+        # ref_formatter 无专属图标，用 edit（笔形，与"格式/编辑"语义匹配）
+        icon_name = self._page
+        if icon_name == "ref_formatter":
+            icon_name = "edit"
+        icon = IconCache.get(icon_name, 18, "default",
                              tint=COLORS["primary"] if self._active else None)
         if icon:
             self.create_image(19, h / 2, image=icon)
@@ -144,9 +148,15 @@ class TaskCard(tk.Frame):
         for w in self.winfo_children():
             w.destroy()
 
-        # 左侧 3px 彩色边条（选中时用主色；未选中用基于任务 id 的稳定色）
-        idx = sum(ord(c) for c in self._task_id) % len(_TASK_ACCENTS)
-        accent = COLORS["primary"] if self._selected else _TASK_ACCENTS[idx]
+        # 左侧 3px 彩色边条（语义化：运行=蓝，暂停=灰，出错=红；选中用主色）
+        if self._selected:
+            accent = COLORS["primary"]
+        elif self._running:
+            accent = COLORS["task_running"]
+        elif self._enabled:
+            accent = COLORS["task_running"]
+        else:
+            accent = COLORS["task_paused"]
         tk.Frame(self, bg=accent, width=3).pack(side=tk.LEFT, fill=tk.Y)
 
         row = tk.Frame(self, bg=bg)
@@ -245,6 +255,7 @@ class TaskSidebar(ttk.Frame):
         ("dashboard", "概览"),
         ("monitor", "监控任务"),
         ("library", "文献书架"),
+        ("ref_formatter", "格式助手"),
         ("settings", "设置"),
     ]
 
@@ -287,20 +298,19 @@ class TaskSidebar(ttk.Frame):
         tk.Frame(self, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=10, pady=(4, 6))
         self._highlight_nav(self._current_page)
 
-        # ═══ 监控标题行 ═══
+        # ═══ 监控标题行（分区：主导航 vs 我的任务） ═══
         title_row = tk.Frame(self, bg=COLORS["sidebar_bg"])
         title_row.pack(fill=tk.X, padx=10, pady=(2, 0))
-        tk.Label(title_row, text="📋 监控任务",
+        tk.Label(title_row, text="我的任务",
                  font=FONT_HEADING, fg=COLORS["text_title"],
                  bg=COLORS["sidebar_bg"]).pack(side=tk.LEFT)
-        self._new_btn = tk.Label(title_row, text="+",
-                                 font=FONT_HEADING,
-                                 fg=COLORS["primary"],
-                                 bg=COLORS["sidebar_bg"],
-                                 cursor="hand2", padx=6)
+        self._task_count_badge = tk.Label(title_row, text="",
+                                          font=FONT_CAPTION, fg=COLORS["text_hint"],
+                                          bg=COLORS["sidebar_bg"])
+        self._task_count_badge.pack(side=tk.LEFT, padx=(4, 0), pady=(3, 0))
+        self._new_btn = IconButton(title_row, icon="plus", command=self._on_new_task_click,
+                                   size=28, bg_color=COLORS["sidebar_bg"], tooltip="新建任务")
         self._new_btn.pack(side=tk.RIGHT)
-        self._new_btn.bind("<Button-1>",
-                           lambda e: self._on_new_callback() if self._on_new_callback else None)
 
         tk.Frame(self, bg=COLORS["border_light"], height=1).pack(fill=tk.X, padx=10, pady=(6, 4))
 
@@ -321,27 +331,8 @@ class TaskSidebar(ttk.Frame):
             self._canvas.itemconfig(self._canvas_window, width=max(event.width, 120))
         self._canvas.bind("<Configure>", _configure_width)
 
-        # ── 滚轮滚动：进入侧栏时绑定，离开时解绑（避免与主内容区冲突） ──
-        def _on_mousewheel(event):
-            # Windows/Linux delta 步进 120；macOS 步进 1~2，差异较大
-            if event.num == 4:
-                self._canvas.yview_scroll(-1, "units")
-            elif event.num == 5:
-                self._canvas.yview_scroll(1, "units")
-            elif event.delta:
-                delta = event.delta if sys.platform == "darwin" else event.delta / 120
-                self._canvas.yview_scroll(int(-delta), "units")
-            return "break"
-
-        def _bind_wheel(_e):
-            self._canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
-            self._canvas.bind_all("<Button-4>", _on_mousewheel, add="+")
-            self._canvas.bind_all("<Button-5>", _on_mousewheel, add="+")
-
-        def _unbind_wheel(_e):
-            self._canvas.unbind_all("<MouseWheel>")
-            self._canvas.unbind_all("<Button-4>")
-            self._canvas.unbind_all("<Button-5>")
+        # ── 滚轮滚动：平滑滚轮，进入侧栏时绑定，离开时解绑 ──
+        _on_mousewheel, _bind_wheel, _unbind_wheel = smooth_wheel_handler(self._canvas)
 
         self._canvas.bind("<Enter>", _bind_wheel)
         self._canvas.bind("<Leave>", _unbind_wheel)
@@ -400,8 +391,14 @@ class TaskSidebar(ttk.Frame):
     # ═══ 对外接口 ═══
 
     def set_task_count(self, count, enabled_count=0):
-        """底部摘要显示任务数"""
+        """底部摘要显示任务数，同时更新标题栏计数徽章"""
         self._task_count_label.configure(text=f"{count} 个任务")
+        if hasattr(self, "_task_count_badge"):
+            self._task_count_badge.configure(text=f"{count}" if count else "")
+
+    def _on_new_task_click(self):
+        if self._on_new_callback:
+            self._on_new_callback()
 
     def set_push_status(self, running):
         """更新底部推送状态"""

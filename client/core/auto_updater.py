@@ -18,8 +18,7 @@ import tarfile
 import time
 from datetime import datetime
 from typing import Optional
-
-import requests
+# requests 惰性导入（函数内）：避免启动阶段冷加载 requests/urllib3（约 300ms）
 
 # ── 仓库配置 ────────────────────────────────────────────
 _GITHUB_OWNER = "xuhan8988-cell"
@@ -144,6 +143,7 @@ def fetch_notice() -> Optional[dict]:
     """
     marker = _load_update_marker()
     try:
+        import requests
         resp = requests.get(_GITHUB_NOTICE_URL, timeout=10)
         if resp.status_code != 200:
             return None
@@ -190,6 +190,7 @@ def check_update(skip_notified: bool = False) -> Optional[dict]:
         return None
 
     try:
+        import requests
         resp = requests.get(_GITHUB_RELEASE_URL, timeout=15)
         if resp.status_code != 200:
             return None
@@ -263,6 +264,7 @@ def download_update(info: dict, progress_callback=None) -> Optional[str]:
     local_path = os.path.join(tmp_dir, f"hongxun_update{ext}")
 
     try:
+        import requests
         resp = requests.get(url, stream=True, timeout=60)
         if resp.status_code != 200:
             return None

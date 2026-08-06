@@ -28,6 +28,16 @@ client/data/*
 !client/data/code_manifest.json
 !client/data/journals_seed.json
 
+# 根目录运行时数据（非源码）
+data/
+
+# macOS 构建产物
+macos/HONGXUN-TY.app/
+
+# 根目录旧版重复文件（源码在 client/ 下）
+/gui_app.py
+/theme.py
+
 # Output files
 output/
 

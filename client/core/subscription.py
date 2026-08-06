@@ -40,46 +40,42 @@ except Exception:
 
 # ── 订阅档位 ──────────────────────────────────────────────
 # plan_key → {label, months, days, origin_price, price, daily, discount}
+# 三档：月 / 年 / 永久（永久档 permanent=True）
 PLANS = {
-    "3M": {
-        "label": "3 个月",
-        "months": 3,
-        "days": 90,
-        "origin_price": 49.9,
-        "price": 29.9,
+    "M": {
+        "label": "1 个月",
+        "months": 1,
+        "days": 30,
+        "origin_price": 19.9,
+        "price": 9.9,
         "daily": 0.33,
-        "discount": "6折",
+        "discount": "5折",
     },
-    "6M": {
-        "label": "6 个月",
-        "months": 6,
-        "days": 180,
-        "origin_price": 99.9,
-        "price": 49.9,
+    "Y": {
+        "label": "1 年",
+        "months": 12,
+        "days": 365,
+        "origin_price": 199.0,
+        "price": 99.0,
         "daily": 0.27,
         "discount": "5折",
     },
-    "12M": {
-        "label": "12 个月",
-        "months": 12,
-        "days": 365,
-        "origin_price": 199.9,
-        "price": 89.9,
-        "daily": 0.24,
-        "discount": "4.5折",
-    },
-    "24M": {
-        "label": "24 个月",
-        "months": 24,
-        "days": 730,
-        "origin_price": 399.9,
-        "price": 159.9,
-        "daily": 0.21,
-        "discount": "4折",
+    "F": {
+        "label": "永久",
+        "months": None,
+        "days": 0,
+        "origin_price": 599.0,
+        "price": 299.0,
+        "daily": None,
+        "discount": "5折",
+        "permanent": True,
     },
 }
 
-DEFAULT_PLAN = "12M"
+DEFAULT_PLAN = "Y"
+
+# 永久订阅到期时间（极远，用于永久档激活）
+PERMANENT_EXPIRY = "2099-12-31T23:59:59"
 
 
 # ======================================================================
@@ -93,9 +89,10 @@ DEFAULT_PLAN = "12M"
 # ======================================================================
 
 # 假支付开关：True 时模拟几秒后自动支付成功（联调用）。
-# 接真实平台后改为 False 或删除。
-_MOCK_PAYMENT = True
-_MOCK_PAID_DELAY = 5  # 秒
+# 已关闭：改为纯轮询等待真实支付平台结果（query_order 返回 pending 直到真实到账）。
+# 接真实平台后，create_order / query_order 替换为真实 API 即可。
+_MOCK_PAYMENT = False
+_MOCK_PAID_DELAY = 5  # 秒（仅 _MOCK_PAYMENT=True 时生效）
 
 # 假订单存储：order_id → {plan, created_at}
 _mock_orders: dict[str, dict] = {}
@@ -161,10 +158,14 @@ def get_license_status() -> dict:
     activated = lic.get("activated", False)
     source = lic.get("source", lic.get("coupon_type", "")) or ""
     expires_at = lic.get("expires_at", "")
+    permanent = bool(lic.get("permanent"))
     remaining = 0
     in_grace = False
     grace_until = ""
-    if activated and expires_at:
+    if activated and permanent:
+        # 永久订阅：始终有效
+        active = True
+    elif activated and expires_at:
         try:
             now = _get_network_time() if _get_network_time else None
             now = now or datetime.now()
@@ -189,14 +190,15 @@ def get_license_status() -> dict:
         "remaining_days": remaining,
         "in_grace": in_grace,
         "grace_until": grace_until,
-        "permanent": bool(lic.get("permanent")),
+        "permanent": permanent,
     }
 
 
 def activate_subscription(plan: str, paid_at: datetime = None) -> bool:
     """支付成功后激活订阅：写入 license.json。
 
-    到期时间 = 支付时间 + 订阅时长（不叠加之前剩余）。
+    月/年档：到期 = 支付时间 + 订阅时长（不叠加之前剩余）。
+    永久档：permanent=True，到期时间写极远时间。
     """
     if plan not in PLANS:
         return False
@@ -206,18 +208,23 @@ def activate_subscription(plan: str, paid_at: datetime = None) -> bool:
         except Exception:
             paid_at = datetime.now()
 
-    valid_days = PLANS[plan]["days"]
-    expires_at = paid_at + timedelta(days=valid_days)
+    p = PLANS[plan]
+    is_permanent = bool(p.get("permanent"))
+    valid_days = p["days"]
+    if is_permanent:
+        expires_at = PERMANENT_EXPIRY
+    else:
+        expires_at = (paid_at + timedelta(days=valid_days)).isoformat()
 
     license_data = {
         "activated": True,
         "source": "subscription",
         "plan": plan,
         "activated_at": paid_at.isoformat(),
-        "expires_at": expires_at.isoformat(),
+        "expires_at": expires_at,
         "coupon_type": plan,
         "valid_days": valid_days,
-        "permanent": False,
+        "permanent": is_permanent,
     }
     try:
         os.makedirs(DATA_DIR, exist_ok=True)

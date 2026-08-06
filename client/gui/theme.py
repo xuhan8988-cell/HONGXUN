@@ -80,14 +80,15 @@ def init_fonts():
     FONT_MONO = font.Font(family=_ui_mono_family(), size=FONT_BASE_SIZE)
     FONT_LABEL = font.Font(family=_ff, size=FONT_BASE_SIZE, weight="bold")
     FONT_METRIC = font.Font(family=_ff, size=min(32, FONT_TITLE_SIZE * 2))
-    FONT_DISPLAY = font.Font(family=_ff, size=min(32, FONT_TITLE_SIZE + 10), weight="bold")
+    FONT_DISPLAY = font.Font(family=_ff, size=min(32, FONT_TITLE_SIZE + 13), weight="bold")
 
     # 推送字体变量到所有依赖模块（from-import 在导入时拷贝 None）
     import sys as _sys
     _fnames = ('FONT_BODY', 'FONT_BODY_BOLD', 'FONT_HEADING', 'FONT_TITLE',
                'FONT_CAPTION', 'FONT_MONO', 'FONT_LABEL', 'FONT_METRIC', 'FONT_DISPLAY')
     _g = globals()
-    for _mn in ('gui.widgets', 'gui.sidebar', 'gui.library_view', 'gui.dashboard', 'gui_app', '__main__'):
+    for _mn in ('gui.widgets', 'gui.sidebar', 'gui.library_view', 'gui.dashboard',
+                'gui.ref_formatter_view', 'gui_app', '__main__'):
         _m = _sys.modules.get(_mn)
         if _m:
             for _n in _fnames:
@@ -98,6 +99,8 @@ def update_font_scale(scale_factor):
     new_body = int(max(FONT_MIN_SIZE, min(FONT_MAX_SIZE, FONT_BASE_SIZE * scale_factor)))
     new_title = int(max(FONT_MIN_SIZE + 2, min(FONT_MAX_SIZE + 2, FONT_TITLE_SIZE * scale_factor)))
     new_caption = int(max(FONT_MIN_SIZE - 1, min(FONT_MAX_SIZE - 2, (FONT_BASE_SIZE - 1) * scale_factor)))
+    new_metric = int(max(FONT_MIN_SIZE + 1, min(FONT_MAX_SIZE + 4, min(32, FONT_TITLE_SIZE * 2) * scale_factor)))
+    new_display = int(max(FONT_MIN_SIZE + 2, min(FONT_MAX_SIZE + 4, min(32, FONT_TITLE_SIZE + 13) * scale_factor)))
 
     FONT_BODY.configure(size=new_body)
     FONT_BODY_BOLD.configure(size=new_body, weight="bold")
@@ -105,6 +108,9 @@ def update_font_scale(scale_factor):
     FONT_TITLE.configure(size=new_title, weight="bold")
     FONT_CAPTION.configure(size=new_caption)
     FONT_MONO.configure(size=new_body)
+    FONT_LABEL.configure(size=new_body, weight="bold")
+    FONT_METRIC.configure(size=new_metric)
+    FONT_DISPLAY.configure(size=new_display, weight="bold")
 
 
 # ======================================================================
@@ -183,10 +189,41 @@ COLORS = {
     "task_accent_4": "#F59E0B",
     "task_accent_5": "#EF4444",
 
+    # ── 任务状态语义色（文档 1.1：不要随机 5 色，按运行状态取色）──
+    "task_running": "#3B82F6",   # 运行中 - 蓝
+    "task_paused": "#94A3B8",    # 已暂停 - 灰
+    "task_error": "#EF4444",     # 出错 - 红
+
     # ── 滚动条 ──
     "scrollbar_bg": "#F1F5F9",      # 滚动条背景
     "scrollbar_thumb": "#CBD5E1",   # 滑块
     "scrollbar_thumb_hover": "#94A3B8",  # 滑块 hover
+}
+
+# ── 语义背景 token（文档 1.1：背景色增加层次）──
+COLORS.setdefault("bg_subtle", "#F8FAFC")   # 卡片内次级区域
+COLORS.setdefault("bg_hover", "#F8FAFC")    # hover 背景（与现有 hover_bg 兼容）
+
+# ======================================================================
+# 分级阴影系统（文档 1.1：三级阴影层次）
+# ======================================================================
+SHADOW_LEVELS = {
+    "sm": (COLORS["shadow_3"], COLORS["shadow_2"]),   # 小卡片
+    "md": (COLORS["shadow_2"], COLORS["shadow_1"]),   # 中卡片
+    "lg": (COLORS["shadow_1"], "#CBD5E1"),            # 悬浮元素
+    "xl": ("#CBD5E1", "#94A3B8"),                     # 弹窗
+}
+
+# ======================================================================
+# 8px 网格间距系统（文档 1.3：所有间距为 8 的倍数）
+# ======================================================================
+SPACING = {
+    "xs": 4,      # 元素内部
+    "sm": 8,      # 紧密相关元素
+    "md": 16,     # 组件内间距
+    "lg": 24,     # 组件间间距
+    "xl": 32,     # 大区块间距
+    "2xl": 48,    # 页面级间距
 }
 
 # ======================================================================
@@ -254,6 +291,7 @@ ICONS = {
     "alert": "⚠",
     "monitor": "\U0001f4cb",
     "library": "\U0001f4da",
+    "ref_formatter": "\U0001f4dd",
     "export": "↗",
 }
 
